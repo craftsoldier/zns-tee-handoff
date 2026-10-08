@@ -85,6 +85,51 @@ pub trait ReleaseSource {
     fn get(&self, url: &str, accept: &str) -> Result<Fetched, FetchError>;
 }
 
+/// Fetch a release's metadata. `Ok(None)` on 404 (release does not exist).
+pub fn fetch_release(source: &dyn ReleaseSource, tag: &str) -> Result<Option<Value>> {
+    let url = format!("{API_BASE}/repos/{REPO}/releases/tags/{tag}");
+    match source.get(&url, "application/vnd.github+json") {
+        Ok(fetched) => {
+            let release = serde_json::from_slice(&fetched.body)
+                .map_err(|_| anyhow!("malformed release metadata"))?;
+            Ok(Some(release))
+        }
+        Err(FetchError::HttpStatus(404)) => Ok(None),
+        Err(FetchError::HttpStatus(code)) => Err(anyhow!("api status {code}")),
+        Err(FetchError::Transport(e)) => Err(anyhow!("api unreachable: {e}")),
+    }
+}
+
+/// Download one asset from a release listing, enforcing the host allowlist and
+/// the GitHub-native digest.
+pub fn download_asset_checked(source: &dyn ReleaseSource, asset: &Value) -> Result<Vec<u8>> {
+    let Some(digest) = asset["digest"]
+        .as_str()
+        .and_then(|digest| digest.strip_prefix("sha256:"))
+    else {
+        return Err(anyhow!("asset digest missing"));
+    };
+    let Some(url) = asset["url"].as_str() else {
+        return Err(anyhow!("asset url missing"));
+    };
+    let fetched = source
+        .get(url, "application/octet-stream")
+        .map_err(|e| match e {
+            FetchError::HttpStatus(code) => anyhow!("asset status {code}"),
+            FetchError::Transport(t) => anyhow!("asset unreachable: {t}"),
+        })?;
+    let Ok(host) = host_of(&fetched.final_url) else {
+        return Err(anyhow!("unexpected asset url"));
+    };
+    if !ASSET_HOSTS.contains(&host.as_str()) {
+        return Err(anyhow!("asset served from unexpected host"));
+    }
+    if hex::encode(Sha256::digest(&fetched.body)) != digest {
+        return Err(anyhow!("asset digest mismatch"));
+    }
+    Ok(fetched.body)
+}
+
 pub struct GitHubRelease {
     agent: ureq::Agent,
 }

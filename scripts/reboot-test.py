@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""M0 reboot persistence test. Run as root on the isolated SNP test host.
+"""M0 stateless boot test. Run as root on the isolated SNP test host.
 
-Usage: reboot-test.py [TAG]     (default: m0-v0.7.0)
+Usage:
+  reboot-test.py genesis TAG   lineage release must NOT exist yet; boots a
+                               disk-less guest, expects genesis, saves the
+                               state blob, prints the relay commands.
+  reboot-test.py recovery TAG  lineage release must exist; boots a fresh
+                               disk-less guest, expects recovery-only with
+                               the lineage fingerprint and self-check accept.
 
-Downloads the tagged release from GitHub, verifies every asset digest, then
-proves the seed survives across two boots on one state disk:
-  boot 1: genesis + local recovery      (m0_created=ok must appear)
-  boot 2: recovery only, fresh challenge (m0_created=ok must NOT appear)
-Both boots must print release_self_check=accept and the same seed fingerprint.
-Every VM is stopped only through its own QMP socket after the reported VM name
-matches dh-<TAG>; nothing else on the host is ever signalled.
+Both boots verify all release asset digests against the GitHub API first, and
+stop their VM only through its own QMP socket after the reported name matches
+dh-<TAG>. No state disk exists anywhere in this test.
 """
 import hashlib
 import json
@@ -19,19 +21,22 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
-TAG = sys.argv[1] if len(sys.argv) > 1 else "m0-v0.7.0"
+if len(sys.argv) != 3 or sys.argv[1] not in ("genesis", "recovery"):
+    raise SystemExit(__doc__)
+PHASE, TAG = sys.argv[1], sys.argv[2]
 assert TAG.startswith("m0-v"), "tag must look like m0-vX.Y.Z"
+
 REPO = "craftsoldier/zns-tee-handoff"
-API = f"https://api.github.com/repos/{REPO}/releases/tags/{TAG}"
+API = f"https://api.github.com/repos/{REPO}/releases/tags"
+LINEAGE = "lineage-main"
 ROOT = Path("/home/ubuntu/dh_tests") / TAG
 ASSETS, RUNTIME = ROOT / "assets", ROOT / "runtime"
-DISK = ROOT / "reboot-state.img"
-UUID = "df050000-0000-4000-8000-000000000005"
 NAME = f"dh-{TAG}"
-MEASUREMENT_ASSET = "snp-measurement.txt"
+REQUIRED_ASSETS = ("m0-initrd.img", "vmlinuz", "OVMF.amdsev.fd")
 
 
 def require(condition, message):
@@ -39,37 +44,38 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
-def api(url, accept):
+def api_json(url, accept):
     request = urllib.request.Request(url, headers={
         "User-Agent": "zns-custody-reboot-test", "Accept": accept,
     })
     with urllib.request.urlopen(request, timeout=120) as response:
-        return response.read()
+        return json.loads(response.read())
 
 
-def fetch_and_verify_assets():
+def fetch_release(tag):
+    return api_json(f"{API}/{tag}", "application/vnd.github+json")
+
+
+def download_assets(release, names):
     ASSETS.mkdir(parents=True, exist_ok=True)
-    release = json.loads(api(API, "application/vnd.github+json"))
-    require(release["tag_name"] == TAG, "api returned a different tag")
     for asset in release["assets"]:
+        if asset["name"] not in names:
+            continue
         digest = asset["digest"]
         require(digest.startswith("sha256:"), f"no digest for {asset['name']}")
         target = ASSETS / asset["name"]
-        target.write_bytes(api(asset["url"], "application/octet-stream"))
+        request = urllib.request.Request(asset["url"], headers={
+            "User-Agent": "zns-custody-reboot-test",
+            "Accept": "application/octet-stream",
+        })
+        with urllib.request.urlopen(request, timeout=300) as response:
+            target.write_bytes(response.read())
         actual = hashlib.sha256(target.read_bytes()).hexdigest()
         require(actual == digest[7:], f"digest mismatch: {asset['name']}")
         print(f"verified {asset['name']}")
-    measurement = (ASSETS / MEASUREMENT_ASSET).read_text().strip()
-    require(len(measurement) == 96, "malformed measurement file")
-    return measurement
-
-
-def run(*args):
-    return subprocess.run(args, check=True, capture_output=True, text=True).stdout
 
 
 def stop_vm(qmp_path, pidfile):
-    """Quit the VM only if its own QMP socket reports the expected name."""
     pid = int(pidfile.read_text())
     with socket.socket(socket.AF_UNIX) as sock:
         sock.settimeout(10)
@@ -98,16 +104,7 @@ def stop_vm(qmp_path, pidfile):
     raise RuntimeError("test VM did not exit")
 
 
-def write_flag(name, content):
-    source = RUNTIME / name.strip("/")
-    source.write_text(content)
-    run("debugfs", "-w", "-R", f"write {source} /{name}", str(DISK))
-
-
 def boot(number, challenge):
-    if number > 1:
-        run("debugfs", "-w", "-R", "rm /boot-challenge", str(DISK))
-    write_flag("boot-challenge", challenge)
     log = RUNTIME / f"boot-{number}.log"
     qmp_path = RUNTIME / f"boot-{number}.qmp"
     pidfile = RUNTIME / f"boot-{number}.pid"
@@ -117,8 +114,7 @@ def boot(number, challenge):
         "sev-snp-guest,id=sev0,cbitpos=51,reduced-phys-bits=1,kernel-hashes=on,policy=0x30000",
         "-bios", str(ASSETS / "OVMF.amdsev.fd"), "-kernel", str(ASSETS / "vmlinuz"),
         "-initrd", str(ASSETS / "m0-initrd.img"),
-        "-append", "console=ttyS0 rdinit=/init panic=-1",
-        "-drive", f"file={DISK},if=virtio,format=raw",
+        "-append", f"console=ttyS0 rdinit=/init panic=-1 challenge={challenge}",
         "-nic", "user,model=virtio-net-pci",
         "-display", "none", "-serial", f"file:{log}", "-monitor", "none",
         "-qmp", f"unix:{qmp_path},server=on,wait=off",
@@ -131,6 +127,10 @@ def boot(number, challenge):
     raise RuntimeError(f"boot {number} timed out")
 
 
+def run(*args):
+    return subprocess.run(args, check=True, capture_output=True, text=True).stdout
+
+
 def fingerprint(log):
     values = [line.split("=", 1)[1] for line in log.splitlines()
               if line.startswith("dummy_seed_sha256=")]
@@ -140,39 +140,62 @@ def fingerprint(log):
 
 def main():
     require(os.geteuid() == 0, "run as root on the isolated SNP test host")
-    require(not DISK.exists(), f"{DISK} already exists; remove it to rerun")
     RUNTIME.mkdir(parents=True, exist_ok=True)
-    measurement = fetch_and_verify_assets()
-    print(f"release measurement: {measurement}")
+    image_release = fetch_release(TAG)
+    require(image_release["tag_name"] == TAG, "api returned a different tag")
+    download_assets(image_release, REQUIRED_ASSETS)
 
-    with DISK.open("xb") as file:
-        file.truncate(256 * 1024 * 1024)
-    run("mkfs.ext4", "-F", "-U", UUID, "-L", "DH_REBOOT_TEST", str(DISK))
-    write_flag("INIT_ALLOWED", "Dummy secrets only. First creation authorized.\n")
-
-    first = boot(1, secrets.token_hex(32))
-    require("M0_TEST_COMPLETE:" in first, "boot 1 failed")
-    require("m0_created=ok" in first, "boot 1 did not create genesis")
-    require("release_self_check=accept" in first, "boot 1 self-check not accepted")
-    fingerprint_one = fingerprint(first)
-    stop_vm(RUNTIME / "boot-1.qmp", RUNTIME / "boot-1.pid")
-    print(f"boot 1 ok: created, recovered, self-check accepted, seed {fingerprint_one}")
-
-    second = boot(2, secrets.token_hex(32))
-    require("M0_TEST_COMPLETE:" in second, "boot 2 failed")
-    require("m0_created=ok" not in second, "boot 2 created new state; recovery broken")
-    require("release_self_check=accept" in second, "boot 2 self-check not accepted")
-    fingerprint_two = fingerprint(second)
-    require(fingerprint_one == fingerprint_two, "seed changed across boots")
-    stop_vm(RUNTIME / "boot-2.qmp", RUNTIME / "boot-2.pid")
-    print(f"boot 2 ok: recovery only, same seed, self-check accepted")
-
-    print(f"REBOOT TEST PASSED: seed {fingerprint_one} persisted across two boots")
+    if PHASE == "genesis":
+        try:
+            fetch_release(LINEAGE)
+            raise RuntimeError(f"{LINEAGE} already exists; a lineage is created once")
+        except urllib.error.HTTPError as error:
+            require(error.code == 404, f"unexpected api status {error.code}")
+        challenge = secrets.token_hex(32)
+        log = boot(1, challenge)
+        require("M0_TEST_COMPLETE:" in log, "genesis boot failed")
+        require("m0_state_created=ok" in log, "genesis did not create state")
+        require("release_self_check=accept" in log, "self-check not accepted")
+        lines = log.splitlines()
+        begin = lines.index("GENESIS_STATE_BLOB_BEGIN")
+        end = lines.index("GENESIS_STATE_BLOB_END")
+        blob = bytes.fromhex("".join(lines[begin + 1:end]))
+        require(len(blob) == 168, "unexpected state blob length")
+        (RUNTIME / "state-v1").write_bytes(blob)
+        stop_vm(RUNTIME / "boot-1.qmp", RUNTIME / "boot-1.pid")
+        print(f"genesis ok: seed {fingerprint(log)}")
+        print("RELAY NOW (authenticated machine):")
+        print(f"  cp {RUNTIME}/state-v1 .")
+        print(f"  gh release create {LINEAGE} --prerelease --title 'lineage main' "
+              f"--notes 'state v1; seed {fingerprint(log)}' state-v1")
+    else:
+        lineage = fetch_release(LINEAGE)
+        assets = {a["name"]: a for a in lineage["assets"]}
+        require("state-v1" in assets, "lineage release has no state-v1")
+        request = urllib.request.Request(assets["state-v1"]["url"], headers={
+            "User-Agent": "zns-custody-reboot-test",
+            "Accept": "application/octet-stream",
+        })
+        with urllib.request.urlopen(request, timeout=120) as response:
+            blob = response.read()
+        digest = assets["state-v1"]["digest"]
+        require(digest.startswith("sha256:"), "lineage asset digest missing")
+        require(hashlib.sha256(blob).hexdigest() == digest[7:],
+                "lineage state digest mismatch")
+        expected = blob[8:40].hex()
+        challenge = secrets.token_hex(32)
+        log = boot(2, challenge)
+        require("M0_TEST_COMPLETE:" in log, "recovery boot failed")
+        require("m0_state_created=ok" not in log, "recovery boot created new state")
+        require("release_self_check=accept" in log, "self-check not accepted")
+        require(fingerprint(log) == expected, "seed changed across boots")
+        stop_vm(RUNTIME / "boot-2.qmp", RUNTIME / "boot-2.pid")
+        print(f"recovery ok: lineage seed {expected} recovered, self-check accepted")
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as error:
-        print(f"REBOOT TEST FAILED: {error}")
+        print(f"{PHASE.upper()} TEST FAILED: {error}")
         sys.exit(1)

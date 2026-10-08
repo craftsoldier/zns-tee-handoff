@@ -1,50 +1,30 @@
 #!/bin/sh
-# Measured test-only PID 1. No shell, network, production disks, or imported keys.
+# Measured stateless test-only PID 1. No shell, no disks, no imported keys.
+# The lineage state is fetched from (or printed for relay to) the lineage
+# release; the seed exists only in RAM.
 export PATH=/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin
 BB=/usr/bin/busybox
 halt_test() {
     echo "M0_TEST_FAILED: $1"
     while :; do "$BB" sleep 3600; done
 }
-"$BB" mkdir -p /proc /sys /dev /run
+"$BB" mkdir -p /proc /sys /dev /run /etc
 "$BB" mount -t proc proc /proc || halt_test proc
 "$BB" mount -t sysfs sysfs /sys || halt_test sysfs
 "$BB" mount -t devtmpfs devtmpfs /dev || halt_test devtmpfs
-"$BB" mount -t tmpfs -o mode=0700 tmpfs /run || halt_test tmpfs
 /usr/bin/insmod /modules/tsm_report.ko || halt_test tsm_report
 /usr/bin/insmod /modules/sev-guest.ko || halt_test sev_guest
 [ -c /dev/sev-guest ] || halt_test missing_sev_guest
-# Optional read-only network for the release self-check (static QEMU slirp config).
-# virtio_net is built into the kernel (CONFIG_VIRTIO_NET=y). A missing NIC is
-# normal (offline boots) and never fatal.
-$BB mkdir -p /etc
+# Read-only network for the lineage fetch and the release self-check (QEMU slirp).
+# A missing NIC means no state and no self-check; the guest names it and halts.
 echo nameserver 10.0.2.3 > /etc/resolv.conf
 $BB ip link set lo up 2>/dev/null || true
 if $BB ip link set eth0 up 2>/dev/null; then
 	$BB ip addr add 10.0.2.15/24 dev eth0 2>/dev/null || true
 	$BB ip route add default via 10.0.2.2 dev eth0 2>/dev/null || true
 fi
-# One dedicated, UUID-checked test volume; never mount an arbitrary host disk.
-[ -b /dev/vda ] || halt_test missing_test_disk
-[ ! -b /dev/vdb ] || halt_test unexpected_extra_disk
-/usr/local/bin/zns-tee-handoff check-test-disk /dev/vda || halt_test disk_identity
-"$BB" mkdir -p /state
-"$BB" mount -t ext4 -o nodev,nosuid,noexec /dev/vda /state || halt_test mount_state
-[ -f /state/boot-challenge ] && [ ! -L /state/boot-challenge ] || halt_test missing_challenge
-CHALLENGE=$("$BB" cat /state/boot-challenge)
-if [ -e /state/INIT_ALLOWED ]; then
-    [ ! -e /state/m0 ] || halt_test existing_state_with_init_flag
-    # Consume authorization before generation; interrupted creation cannot regenerate.
-    "$BB" rm /state/INIT_ALLOWED || halt_test consume_init
-    "$BB" sync || halt_test sync_init
-    /usr/local/bin/zns-tee-handoff m0 create /state/m0 || halt_test create
-fi
-/usr/local/bin/zns-tee-handoff m0 recover /state/m0 "$CHALLENGE" || halt_test recover
-echo "M0_GENESIS_METADATA_BEGIN"
-"$BB" cat /state/m0/genesis.json
-echo
-echo "M0_GENESIS_METADATA_END"
-"$BB" sync || halt_test sync_state
-"$BB" umount /state || halt_test unmount_state
-echo "M0_TEST_COMPLETE: persistent state recovered and unmounted"
+CHALLENGE=$($BB cat /proc/cmdline | $BB sed -n 's/.*challenge=\([0-9a-f]*\).*/\1/p')
+[ -n "$CHALLENGE" ] || halt_test missing_challenge
+/usr/local/bin/zns-tee-handoff m0 boot "$CHALLENGE" || halt_test boot
+echo "M0_TEST_COMPLETE: lineage state handled with self-check"
 while :; do "$BB" sleep 3600; done
