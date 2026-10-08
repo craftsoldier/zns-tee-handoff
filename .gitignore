@@ -1,0 +1,9 @@
+target/
+artifacts/
+runtime/
+*.img
+*.qcow2
+*.key
+*.pem
+*.log
+.env
