@@ -154,9 +154,9 @@ def main():
     extract(pins["modules"], modules, cache, archive)
     modules_root = modules / "usr/lib/modules" / pins["kernel_version"] / "kernel"
     for relative, name in (
-        ("virt/coco/guest/tsm_report.ko.zst", "tsm_report.ko"),
-        ("virt/coco/sev-guest/sev-guest.ko.zst", "sev-guest.ko"),
-        ("net/virtio_net.ko.zst", "virtio_net.ko"),
+        ("drivers/virt/coco/guest/tsm_report.ko.zst", "tsm_report.ko"),
+        ("drivers/virt/coco/sev-guest/sev-guest.ko.zst", "sev-guest.ko"),
+        ("drivers/net/virtio_net.ko.zst", "virtio_net.ko"),
     ):
         source = modules_root / relative
         compressed = True
