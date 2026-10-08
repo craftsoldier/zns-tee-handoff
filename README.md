@@ -70,7 +70,7 @@ other profile changes require a new measurement. Boot configuration must enforce
 the kernel/initramfs hashes; no successful hardware launch is claimed yet.
 
 The guest init program runs dummy creation and same-boot recovery, emits public
-metadata and a raw report in base64, then waits without opening a shell. Guest
+metadata and a raw report in hexadecimal, then waits without opening a shell. Guest
 state lives in tmpfs and is lost on shutdown. No disks or networking are needed;
 this first image does not test durable recovery across a reboot.
 

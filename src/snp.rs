@@ -118,6 +118,8 @@ pub fn create(directory: &Path) -> Result<()> {
     }
     println!("dummy_seed_sha256={}", record.dummy_seed_sha256);
     println!("capsule_sha256={}", record.capsule_sha256);
+    // The public report contains no seed or SK. Emit it without BusyBox applets.
+    println!("attestation_report_hex={}", hex::encode(&report));
     println!("m0_created=ok; SK stored only as chip-wrapped ciphertext; no M1 handoff yet");
     Ok(())
 }
