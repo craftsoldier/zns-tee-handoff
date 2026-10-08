@@ -83,7 +83,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--commit", required=True)
+    parser.add_argument("--release-tag", default="", help="tag to bake into the guest release self-check")
     args = parser.parse_args()
+    release_tag = args.release_tag.strip()
+    if release_tag and (
+        not release_tag.startswith("m0-v") or "/" in release_tag or any(c.isspace() for c in release_tag)
+    ):
+        raise RuntimeError("invalid release tag")
     commit = run("git", "rev-parse", "HEAD", cwd=ROOT)
     if commit != args.commit or run("git", "status", "--porcelain", "--untracked-files=no", cwd=ROOT):
         raise RuntimeError("build must use the exact expected commit with no tracked modifications")
@@ -108,6 +114,7 @@ def main():
     env["CARGO_TARGET_DIR"] = str(work / "cargo-target")
     env["CARGO_INCREMENTAL"] = "0"
     env["SOURCE_DATE_EPOCH"] = "0"
+    env["RELEASE_TAG"] = release_tag
     env["RUSTFLAGS"] = f"--remap-path-prefix={ROOT}=/src --remap-path-prefix={work}=/build"
     # Prevent panic/source strings from depending on cargo registry location.
     cargo_home = Path(env.get("CARGO_HOME", str(Path.home() / ".cargo"))).resolve()
@@ -139,16 +146,24 @@ def main():
     (localbin / "zns-tee-handoff").chmod(0o755)
     shutil.copyfile(ROOT / "image/init", stage / "init")
     (stage / "init").chmod(0o755)
-    for name in ("proc", "sys", "dev", "run", "modules"):
+    for name in ("proc", "sys", "dev", "run", "modules", "etc"):
         (stage / name).mkdir(exist_ok=True)
     install_member(pins["kernel"], output / "vmlinuz", work / "kernel", cache, archive)
     install_member(pins["ovmf"], output / "OVMF.amdsev.fd", work / "ovmf", cache, archive)
     modules = work / "kernel-modules"
     extract(pins["modules"], modules, cache, archive)
     base = modules / "usr/lib/modules" / pins["kernel_version"] / "kernel/drivers/virt/coco"
-    for relative, name in (("guest/tsm_report.ko.zst", "tsm_report.ko"), ("sev-guest/sev-guest.ko.zst", "sev-guest.ko")):
+    for relative, name in (("guest/tsm_report.ko.zst", "tsm_report.ko"), ("sev-guest/sev-guest.ko.zst", "sev-guest.ko"), ("net/virtio_net.ko.zst", "virtio_net.ko")):
+        source = base / relative
+        compressed = True
+        if not source.exists():
+            source = base / relative.removesuffix(".zst")
+            compressed = False
         with (stage / "modules" / name).open("xb") as target:
-            subprocess.run(["zstd", "-dc", str(base / relative)], stdout=target, check=True)
+            subprocess.run(
+                ["zstd", "-dc", str(source)] if compressed else ["cat", str(source)],
+                stdout=target, check=True,
+            )
     # Check the executable loader and direct library requirements against the guest payload.
     for executable in (localbin / "zns-tee-handoff", busyboxes[0], usrbin / "kmod"):
         dynamic = run("readelf", "-d", str(executable))
@@ -176,18 +191,6 @@ def main():
     if len(measurement) != 96 or any(c not in "0123456789abcdef" for c in measurement):
         raise RuntimeError("invalid expected SNP measurement output")
     (output / "snp-measurement.txt").write_text(measurement + "\n")
-    artifacts = {p.name: digest(p) for p in sorted(output.iterdir()) if p.is_file()}
-    manifest = {
-        "format": "m0-release-v1", "source_repository": "craftsoldier/zns-tee-handoff",
-        "source_commit": commit, "expected_snp_measurement": measurement,
-        "launch": profile, "pins": pins, "measurement_tool": "sev-snp-measure 0.0.13",
-        "artifacts": artifacts,
-        "security_status": "dummy M0 with persistent recovery test support; guest does not enforce release approval; M1 handoff not implemented; see external test evidence",
-        "reproducibility_scope": "two clean GitHub runners must match; Ubuntu runner native build tools are not a hermetic toolchain"
-    }
-    (output / "release-manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
-    sums = "".join(f"{digest(p)}  {p.name}\n" for p in sorted(output.iterdir()) if p.is_file())
-    (output / "SHA256SUMS").write_text(sums)
     print(f"Built source {commit}; expected SNP measurement {measurement}")
 
 
