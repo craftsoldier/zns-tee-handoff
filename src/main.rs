@@ -16,18 +16,7 @@ fn main() {
 fn run() -> Result<()> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     match args.as_slice() {
-        [command, device] if command == "check-test-disk" => {
-            let mut file = std::fs::File::open(device)?;
-            file.seek(SeekFrom::Start(1024))?;
-            let mut superblock = [0; 120];
-            file.read_exact(&mut superblock)?;
-            anyhow::ensure!(superblock[56..58] == [0x53, 0xef], "test disk is not ext4");
-            anyhow::ensure!(
-                hex::encode(&superblock[104..120]) == "df050000000040008000000000000005",
-                "unexpected test disk UUID"
-            );
-            Ok(())
-        }
+        [command, device] if command == "check-test-disk" => check_test_disk(Path::new(device)),
         [role, command, directory, challenge] if role == "m0" && command == "recover" => {
             let bytes = hex::decode(challenge.to_string_lossy().as_ref())?;
             let challenge: [u8; 32] = bytes
@@ -53,7 +42,7 @@ fn run() -> Result<()> {
             recover(Path::new(directory))
         }
         [command] if command == "--help" || command == "-h" => {
-            println!("Usage:\n  zns-tee-handoff demo\n  zns-tee-handoff m0 create NEW_DIRECTORY\n  zns-tee-handoff m0 recover DIRECTORY\n\nDummy secrets only. m0 commands require a Linux SNP guest. No M1 handoff yet.");
+            println!("Usage:\n  zns-tee-handoff demo\n  zns-tee-handoff m0 create NEW_DIRECTORY\n  zns-tee-handoff m0 recover DIRECTORY [CHALLENGE_HEX]\n  zns-tee-handoff check-test-disk DEVICE\n\nCHALLENGE_HEX is 32 bytes as 64 hex characters; omitted means no freshness challenge.\nDummy secrets only. m0 commands require a Linux SNP guest. No M1 handoff yet.");
             Ok(())
         }
         _ => bail!("invalid arguments; use --help"),
@@ -78,7 +67,7 @@ fn recover(_directory: &Path) -> Result<()> {
     bail!("m0 recover requires a Linux SEV-SNP guest")
 }
 
-#[allow(dead_code)]
+#[cfg(target_os = "linux")]
 fn read_record(path: &Path) -> Result<Vec<u8>> {
     let metadata = std::fs::symlink_metadata(path).context("inspect record")?;
     anyhow::ensure!(
@@ -96,4 +85,26 @@ fn recover_challenged(directory: &Path, challenge: [u8; 32]) -> Result<()> {
 #[cfg(not(target_os = "linux"))]
 fn recover_challenged(_directory: &Path, _challenge: [u8; 32]) -> Result<()> {
     bail!("requires Linux SNP guest")
+}
+
+/// Check the dedicated test volume before PID 1 mounts it.
+fn check_test_disk(device: &Path) -> Result<()> {
+    const SUPERBLOCK_OFFSET: u64 = 1024;
+    const MAGIC_OFFSET: usize = 56;
+    const UUID_OFFSET: usize = 104;
+    const TEST_UUID: &str = "df050000000040008000000000000005";
+
+    let mut file = std::fs::File::open(device).context("open test volume")?;
+    file.seek(SeekFrom::Start(SUPERBLOCK_OFFSET))?;
+    let mut superblock = [0; 120];
+    file.read_exact(&mut superblock)?;
+    anyhow::ensure!(
+        superblock[MAGIC_OFFSET..MAGIC_OFFSET + 2] == [0x53, 0xef],
+        "test disk is not ext4"
+    );
+    anyhow::ensure!(
+        hex::encode(&superblock[UUID_OFFSET..UUID_OFFSET + 16]) == TEST_UUID,
+        "unexpected test disk UUID"
+    );
+    Ok(())
 }

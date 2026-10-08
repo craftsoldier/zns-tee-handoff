@@ -6,9 +6,12 @@ or private credential belongs here.
 
 ## Status
 
-Initial M0 dummy capsule generation and local SNP chip-sealing code exist.
-No M1 handoff, release approval verification, certificate verification, guest
-launch, or hardware validation has been completed. This is not audited software.
+M0 dummy seed generation, capsule encryption, SNP chip sealing, and recovery
+across separate boots have been tested on hardware using release `m0-v0.5.0`.
+The external test verified GitHub provenance and fresh AMD reports.
+[Results and limitations](docs/reboot-test-m0-v0.5.0.md) are recorded.
+The guest does not enforce release approval or verify peer certificates; M1
+handoff is not implemented. This is not audited software.
 
 ## First M0 program
 
@@ -20,7 +23,7 @@ Inside a dedicated Linux SNP test guest:
 
 ```text
 zns-tee-handoff m0 create /state/new-dummy-genesis
-zns-tee-handoff m0 recover /state/new-dummy-genesis
+zns-tee-handoff m0 recover /state/new-dummy-genesis [CHALLENGE_HEX]
 ```
 
 Creation requires a new destination directory and policy `0x30000`. It writes
@@ -29,7 +32,9 @@ It never writes the raw seed or SK. The wrapping key is an HKDF-separated key
 from the SNP derived-key interface, bound to actual guest policy and measurement.
 The authenticated chip-layer header binds chip ID, measurement, policy, and
 capsule hash. Recovery checks those bindings and prints the recovered seed's
-public SHA-256 fingerprint. This is local recovery, not the M1 handoff.
+public SHA-256 fingerprint. An optional 64-character hex challenge binds a fresh
+recovery report to the request; omission uses zero bytes and provides no freshness.
+This is local recovery, not the M1 handoff.
 
 If file creation fails midway, the partial directory is retained and creation
 refuses to overwrite it. A report collected by this initial program is not an
@@ -67,12 +72,15 @@ The launch profile targets QEMU on the inspected EPYC 8024P (CPU 25/160/2), two
 vCPUs, 4 GiB RAM, policy `0x30000`, features `0x1`, and kernel hashes enabled.
 Policy is a separate attestation check, not part of the launch digest. CPU and
 other profile changes require a new measurement. Boot configuration must enforce
-the kernel/initramfs hashes; no successful hardware launch is claimed yet.
+the kernel/initramfs hashes. The v0.5.0 hardware test matched all 48 measurement
+bytes against the published release record.
 
-The guest init program runs dummy creation and same-boot recovery, emits public
-metadata and a raw report in hexadecimal, then waits without opening a shell. Guest
-state lives in tmpfs and is lost on shutdown. No disks or networking are needed;
-this first image does not test durable recovery across a reboot.
+Since v0.5.0, the guest init program uses a dedicated UUID-checked test disk.
+It creates state only with the one-time initialization flag; later boots recover
+existing state. It emits public metadata and a fresh recovery report, then syncs
+and unmounts the disk before waiting without opening a shell. Networking is
+disabled. Earlier releases through v0.4.0 used tmpfs and tested same-boot recovery
+only. See the reboot test section for disk preparation and isolation requirements.
 
 Release assets:
 
