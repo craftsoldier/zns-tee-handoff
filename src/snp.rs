@@ -201,10 +201,10 @@ pub fn live_measurement() -> Result<[u8; 48]> {
 
 /// Non-fatal release self-check; only adds verdict lines to the boot output.
 fn release_self_check() {
-    let check = crate::verify::self_check(
+    let check = zns_tee_handoff::verify::self_check(
         live_measurement().ok(),
-        crate::verify::baked_tag(),
-        &crate::verify::GitHubRelease::default(),
+        zns_tee_handoff::verify::baked_tag(),
+        &zns_tee_handoff::verify::GitHubRelease::default(),
     );
     println!("release_self_check={}", check.status);
     if !check.detail.is_empty() {
