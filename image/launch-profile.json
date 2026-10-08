@@ -7,7 +7,7 @@
   "cpu_model": 160,
   "cpu_stepping": 2,
   "vcpus": 2,
-  "memory_mib": 1024,
+  "memory_mib": 4096,
   "guest_policy": "0x30000",
   "guest_features": "0x1",
   "kernel_hashes": true,

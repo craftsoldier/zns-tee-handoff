@@ -64,7 +64,7 @@ runner jobs must produce byte-identical outputs before the publish job runs.
 This verifies repeatability for that run, not universal reproducibility.
 
 The launch profile targets QEMU on the inspected EPYC 8024P (CPU 25/160/2), two
-vCPUs, 1 GiB RAM, policy `0x30000`, features `0x1`, and kernel hashes enabled.
+vCPUs, 4 GiB RAM, policy `0x30000`, features `0x1`, and kernel hashes enabled.
 Policy is a separate attestation check, not part of the launch digest. CPU and
 other profile changes require a new measurement. Boot configuration must enforce
 the kernel/initramfs hashes; no successful hardware launch is claimed yet.

@@ -11,8 +11,8 @@ halt_test() {
 "$BB" mount -t sysfs sysfs /sys || halt_test sysfs
 "$BB" mount -t devtmpfs devtmpfs /dev || halt_test devtmpfs
 "$BB" mount -t tmpfs -o mode=0700 tmpfs /run || halt_test tmpfs
-/usr/bin/kmod insmod /modules/tsm_report.ko || halt_test tsm_report
-/usr/bin/kmod insmod /modules/sev-guest.ko || halt_test sev_guest
+/usr/bin/insmod /modules/tsm_report.ko || halt_test tsm_report
+/usr/bin/insmod /modules/sev-guest.ko || halt_test sev_guest
 [ -c /dev/sev-guest ] || halt_test missing_sev_guest
 echo "M0_TEST_BEGIN: dummy secrets; ephemeral state"
 /usr/local/bin/zns-tee-handoff m0 create /run/m0 || halt_test create

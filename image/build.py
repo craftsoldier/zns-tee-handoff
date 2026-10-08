@@ -131,6 +131,8 @@ def main():
     if busybox != busyboxes[0]:
         busybox.symlink_to(os.path.relpath(busyboxes[0], usrbin))
     (usrbin / "sh").symlink_to("busybox")
+    # kmod dispatches legacy module commands by argv[0], not a subcommand.
+    (usrbin / "insmod").symlink_to("kmod")
     localbin = stage / "usr/local/bin"
     localbin.mkdir(parents=True)
     shutil.copyfile(binary, localbin / "zns-tee-handoff")
