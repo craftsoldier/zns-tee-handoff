@@ -156,7 +156,6 @@ def main():
     for relative, name in (
         ("drivers/virt/coco/guest/tsm_report.ko.zst", "tsm_report.ko"),
         ("drivers/virt/coco/sev-guest/sev-guest.ko.zst", "sev-guest.ko"),
-        ("drivers/net/virtio_net.ko.zst", "virtio_net.ko"),
     ):
         source = modules_root / relative
         compressed = True

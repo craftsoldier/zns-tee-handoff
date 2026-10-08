@@ -15,10 +15,10 @@ halt_test() {
 /usr/bin/insmod /modules/sev-guest.ko || halt_test sev_guest
 [ -c /dev/sev-guest ] || halt_test missing_sev_guest
 # Optional read-only network for the release self-check (static QEMU slirp config).
-# A missing NIC is normal (offline boots) and never fatal.
+# virtio_net is built into the kernel (CONFIG_VIRTIO_NET=y). A missing NIC is
+# normal (offline boots) and never fatal.
 $BB mkdir -p /etc
 echo nameserver 10.0.2.3 > /etc/resolv.conf
-/usr/bin/insmod /modules/virtio_net.ko 2>/dev/null || true
 $BB ip link set lo up 2>/dev/null || true
 if $BB ip link set eth0 up 2>/dev/null; then
 	$BB ip addr add 10.0.2.15/24 dev eth0 2>/dev/null || true
