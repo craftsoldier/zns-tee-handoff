@@ -6,8 +6,48 @@ or private credential belongs here.
 
 ## Status
 
-Planning and host inspection only. No handoff implementation, security audit,
-guest launch, or hardware validation has been completed.
+Initial M0 dummy capsule generation and local SNP chip-sealing code exist.
+No M1 handoff, release approval verification, certificate verification, guest
+launch, or hardware validation has been completed. This is not audited software.
+
+## First M0 program
+
+`cargo run --locked -- demo` generates dummy seed and SK, encrypts and decrypts
+the capsule in memory, and prints only public hashes. It writes no files and
+provides no TEE or persistence assurance.
+
+Inside a dedicated Linux SNP test guest:
+
+```text
+zns-tee-handoff m0 create /state/new-dummy-genesis
+zns-tee-handoff m0 recover /state/new-dummy-genesis
+```
+
+Creation requires a new destination directory and policy `0x30000`. It writes
+the capsule, chip-wrapped SK, a raw genesis report, and public JSON metadata.
+It never writes the raw seed or SK. The wrapping key is an HKDF-separated key
+from the SNP derived-key interface, bound to actual guest policy and measurement.
+The authenticated chip-layer header binds chip ID, measurement, policy, and
+capsule hash. Recovery checks those bindings and prints the recovered seed's
+public SHA-256 fingerprint. This is local recovery, not the M1 handoff.
+
+If file creation fails midway, the partial directory is retained and creation
+refuses to overwrite it. A report collected by this initial program is not an
+approved measurement record or peer authentication: certificate verification
+and signed release approval remain to be implemented. These commands must not
+run on existing production guests or access production state.
+
+The code has no plaintext key export or development wrapping-key fallback.
+Persistent key creation requires `/dev/sev-guest`; the bare-metal host's
+`/dev/sev` interface is not a substitute. Unit tests check capsule recovery,
+wrong-key rejection, tampering, truncation, and wrapping context authentication.
+Passing those tests does not establish hardware recovery or protocol security.
+
+Changes are committed and pushed before any server transfer. Linux CI compiles
+the SNP code and tests the dummy cryptography without launching a VM or accessing
+hardware keys. Future build and release artifacts must refer to an exact pushed
+commit SHA; they are not generated from an uncommitted working tree. The release
+publishing and manifest signing workflow is not implemented yet.
 
 ## Intended experiment
 

@@ -7,3 +7,5 @@ runtime/
 *.pem
 *.log
 .env
+.cargo-cache/
+*.tar.gz

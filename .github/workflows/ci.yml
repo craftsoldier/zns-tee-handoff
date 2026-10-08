@@ -1,0 +1,22 @@
+name: M0 checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install pinned compiler
+        run: rustup toolchain install 1.93.1 --profile minimal --component rustfmt --component clippy
+      - name: Formatting
+        run: cargo +1.93.1 fmt --check
+      - name: Lint Linux SNP code
+        run: cargo +1.93.1 clippy --locked --all-targets -- -D warnings
+      - name: Capsule tests
+        run: cargo +1.93.1 test --locked
+      - name: In-memory dummy demonstration
+        run: cargo +1.93.1 run --locked -- demo
