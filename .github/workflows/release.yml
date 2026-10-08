@@ -1,0 +1,141 @@
+name: Guest release
+
+on:
+  push:
+    tags: ["m0-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: guest-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Independent build ${{ matrix.copy }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        copy: [a, b]
+    steps:
+      - name: Checkout triggering commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Validate source and read compiler pin
+        id: source
+        env:
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          commit=$(git rev-parse HEAD)
+          expected=$(git rev-parse "$EVENT_SHA^{commit}")
+          test "$commit" = "$expected"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "rust=$(python3 -c 'import json; print(json.load(open("image/pins.json"))["rust"])')" >> "$GITHUB_OUTPUT"
+      - name: Install pinned Rust compiler
+        env:
+          RUST_VERSION: ${{ steps.source.outputs.rust }}
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component rustfmt --component clippy
+          rustup default "$RUST_VERSION"
+      - name: Install host build utilities
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential binutils zstd python3-venv
+          python3 --version
+          gcc --version
+          ld --version
+      - name: Verify M0 and deterministic archive assembly
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+          cargo run --locked -- demo
+          python3 -m unittest discover -s image -p 'test_*.py'
+          sh -n image/init
+      - name: Install hash-locked offline measurement tool
+        run: |
+          python3 -m venv .measure-venv
+          .measure-venv/bin/pip install --require-hashes --only-binary=:all: -r image/measurement-requirements.txt
+          test "$(.measure-venv/bin/sev-snp-measure --version)" = "sev-snp-measure 0.0.13"
+      - name: Build boot artifacts and expected measurement
+        env:
+          SOURCE_COMMIT: ${{ steps.source.outputs.commit }}
+        run: python3 image/build.py --output artifacts/guest --commit "$SOURCE_COMMIT"
+      - name: Upload independent build
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: guest-${{ matrix.copy }}
+          path: artifacts/guest/*
+          if-no-files-found: error
+          retention-days: 14
+
+  verify:
+    name: Compare independent builds
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: guest-*
+          path: builds
+      - name: Require identical release bytes
+        run: |
+          set -euo pipefail
+          (cd builds/guest-a && sha256sum --check SHA256SUMS)
+          (cd builds/guest-b && sha256sum --check SHA256SUMS)
+          diff -r builds/guest-a builds/guest-b
+          echo "Both independent builds produced identical release artifacts." >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Attest and publish tagged release
+    needs: verify
+    if: startsWith(github.ref, 'refs/tags/m0-v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: guest-a
+          path: release-assets
+      - name: Attest exact release artifacts
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-path: release-assets/*
+      - name: Publish prerelease at triggering tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, pathlib
+          manifest = json.loads(pathlib.Path("release-assets/release-manifest.json").read_text())
+          notes = (
+              "Dummy M0 guest build from commit `" + manifest["source_commit"] + "`.\n\n"
+              "Two independent GitHub runner builds produced identical artifacts. "
+              "SHA256SUMS and GitHub provenance attestations bind the published files.\n\n"
+              "Expected SNP measurement: `" + manifest["expected_snp_measurement"] + "`.\n\n"
+              "Target: the launch profile in launch-profile.json. Kernel policy must be checked separately. "
+              "No hardware guest launch is performed by this workflow.\n\n"
+              "Dummy secrets only. Guest state is ephemeral; no persistent disks or networking. "
+              "M1 handoff and live attestation verification are not implemented. "
+              "Native Ubuntu build tools are not fully pinned; matching builds establish repeatability for this run, not universal reproducibility.\n"
+          )
+          pathlib.Path("release-notes.md").write_text(notes)
+          PY
+          gh release create "$RELEASE_TAG" release-assets/* --verify-tag --prerelease \
+            --title "$RELEASE_TAG — measured M0 test guest" --notes-file release-notes.md

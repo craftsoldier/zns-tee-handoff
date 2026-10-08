@@ -1,7 +1,7 @@
 # zns-tee-handoff
 
 Experimental SEV-SNP custody handoff using dummy secrets. This repository is
-private under craftsoldier. No production seed, signing key, capsule, guest disk,
+public under craftsoldier. No production seed, signing key, capsule, guest disk,
 or private credential belongs here.
 
 ## Status
@@ -46,8 +46,59 @@ Passing those tests does not establish hardware recovery or protocol security.
 Changes are committed and pushed before any server transfer. Linux CI compiles
 the SNP code and tests the dummy cryptography without launching a VM or accessing
 hardware keys. Future build and release artifacts must refer to an exact pushed
-commit SHA; they are not generated from an uncommitted working tree. The release
-publishing and manifest signing workflow is not implemented yet.
+commit SHA; they are not generated from an uncommitted working tree. Runtime
+verification of release approval is still not implemented.
+
+## Automated guest releases
+
+`.github/workflows/release.yml` runs manually for validation or on a new `m0-v*`
+tag for publication. It checks out the triggering SHA, runs the tests, and uses
+`image/build.py` to build a custom Ubuntu-package-based initramfs containing M0.
+No Nix, Buildroot, VM launch, production code, or server access is involved.
+
+The kernel, SNP driver modules, OVMF, and guest packages are content-hash pinned
+in `image/pins.json`. Rust and Cargo.lock are pinned; measurement dependencies
+are hash-locked for Python 3.12 in `image/measurement-requirements.txt`. Ubuntu
+runner native build utilities are not a fully hermetic toolchain. Two clean
+runner jobs must produce byte-identical outputs before the publish job runs.
+This verifies repeatability for that run, not universal reproducibility.
+
+The launch profile targets QEMU on the inspected EPYC 8024P (CPU 25/160/2), two
+vCPUs, 1 GiB RAM, policy `0x30000`, features `0x1`, and kernel hashes enabled.
+Policy is a separate attestation check, not part of the launch digest. CPU and
+other profile changes require a new measurement. Boot configuration must enforce
+the kernel/initramfs hashes; no successful hardware launch is claimed yet.
+
+The guest init program runs dummy creation and same-boot recovery, emits public
+metadata and a raw report in base64, then waits without opening a shell. Guest
+state lives in tmpfs and is lost on shutdown. No disks or networking are needed;
+this first image does not test durable recovery across a reboot.
+
+Release assets:
+
+- `m0-initrd.img`, `vmlinuz`, `OVMF.amdsev.fd`, and `zns-tee-handoff`.
+- `launch-profile.json`, `snp-measurement.txt`, and `release-manifest.json`.
+- `SHA256SUMS` covering all other assets.
+
+The manifest records the actual source commit and expected offline measurement.
+GitHub provenance attestations bind the asset digests to the publishing workflow;
+they do not replace live AMD attestation or define your runtime approval policy.
+Consumers must constrain the repository, signer workflow, commit/tag policy, and
+artifact digest when verifying provenance. Never trust an unsigned manifest just
+because its measurement matches a report.
+
+Push the workflow commit first, validate it with a manual run, then push a new
+tag on that commit. Existing release tags must not be moved. The workflow uses
+the triggering tag, never a mutable lookup of the latest release, and creates a
+prerelease only after both builds match. To verify downloaded artifact provenance:
+
+```text
+gh attestation verify release-manifest.json --repo craftsoldier/zns-tee-handoff --signer-workflow craftsoldier/zns-tee-handoff/.github/workflows/release.yml
+sha256sum --check SHA256SUMS
+```
+
+After verifying the authenticated manifest, consumers must also check its source
+commit, launch profile, and artifact hashes against their approval policy.
 
 ## Intended experiment
 

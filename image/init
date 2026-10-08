@@ -1,0 +1,28 @@
+#!/bin/sh
+# Measured test-only PID 1. No shell, network, production disks, or imported keys.
+export PATH=/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin
+BB=/usr/bin/busybox
+halt_test() {
+    echo "M0_TEST_FAILED: $1"
+    while :; do "$BB" sleep 3600; done
+}
+"$BB" mkdir -p /proc /sys /dev /run
+"$BB" mount -t proc proc /proc || halt_test proc
+"$BB" mount -t sysfs sysfs /sys || halt_test sysfs
+"$BB" mount -t devtmpfs devtmpfs /dev || halt_test devtmpfs
+"$BB" mount -t tmpfs -o mode=0700 tmpfs /run || halt_test tmpfs
+/usr/bin/kmod insmod /modules/tsm_report.ko || halt_test tsm_report
+/usr/bin/kmod insmod /modules/sev-guest.ko || halt_test sev_guest
+[ -c /dev/sev-guest ] || halt_test missing_sev_guest
+echo "M0_TEST_BEGIN: dummy secrets; ephemeral state"
+/usr/local/bin/zns-tee-handoff m0 create /run/m0 || halt_test create
+/usr/local/bin/zns-tee-handoff m0 recover /run/m0 || halt_test recover
+echo "M0_GENESIS_METADATA_BEGIN"
+"$BB" cat /run/m0/genesis.json
+echo
+echo "M0_GENESIS_METADATA_END"
+echo "M0_ATTESTATION_BASE64_BEGIN"
+"$BB" base64 /run/m0/genesis-report.bin
+echo "M0_ATTESTATION_BASE64_END"
+echo "M0_TEST_COMPLETE: same-boot chip-layer recovery; not a reboot test"
+while :; do "$BB" sleep 3600; done

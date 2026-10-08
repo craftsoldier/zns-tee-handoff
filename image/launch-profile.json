@@ -1,0 +1,22 @@
+{
+  "format": "m0-launch-profile-v1",
+  "machine": "q35",
+  "vmm_type": "QEMU",
+  "cpu": "host",
+  "cpu_family": 25,
+  "cpu_model": 160,
+  "cpu_stepping": 2,
+  "vcpus": 2,
+  "memory_mib": 1024,
+  "guest_policy": "0x30000",
+  "guest_features": "0x1",
+  "kernel_hashes": true,
+  "cbitpos": 51,
+  "reduced_phys_bits": 1,
+  "cmdline": "console=ttyS0 rdinit=/init panic=-1",
+  "kernel": "vmlinuz",
+  "initrd": "m0-initrd.img",
+  "ovmf": "OVMF.amdsev.fd",
+  "state": "ephemeral tmpfs; no persistent host disks",
+  "network": "disabled"
+}

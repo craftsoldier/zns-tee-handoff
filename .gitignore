@@ -9,3 +9,5 @@ runtime/
 .env
 .cargo-cache/
 *.tar.gz
+.measure-venv/
+__pycache__/

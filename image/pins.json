@@ -1,0 +1,30 @@
+{
+  "rust": "1.93.1",
+  "archive": "https://archive.ubuntu.com/ubuntu/",
+  "kernel_version": "7.0.0-15-generic",
+  "kernel": {
+    "path": "pool/main/l/linux-signed/linux-image-7.0.0-15-generic_7.0.0-15.15_amd64.deb",
+    "sha256": "5f9ee6a8900717b2110b8de9cf12e4f04c9593e212488847105c484adf2c2531",
+    "member": "boot/vmlinuz-7.0.0-15-generic",
+    "member_sha256": "8600a313d5d686f4b1a70e1cfb2e7606660a1f7b9a1a252e2ef2ae9cdfaa2b89"
+  },
+  "modules": {
+    "path": "pool/main/l/linux/linux-modules-7.0.0-15-generic_7.0.0-15.15_amd64.deb",
+    "sha256": "e2994923c51d81fb0e4f48d56b8527cc5f86e3b3fbf9d210f11d6da6c71f93f5"
+  },
+  "ovmf": {
+    "path": "pool/main/e/edk2-hwe/ovmf-amdsev-hwe_2025.11-3ubuntu8.2_all.deb",
+    "sha256": "c38af8c8836ff73108ee449df9972381e9fcf47ab5e124ade836865f143691d6",
+    "member": "usr/share/ovmf/OVMF.amdsev.fd",
+    "member_sha256": "a90ff0c9335690c8a82c89c71c71f082f7c8ed41bb6a4f017fbc90498092949b"
+  },
+  "guest_packages": [
+    {"path": "pool/main/b/busybox/busybox-initramfs_1.37.0-7ubuntu1_amd64.deb", "sha256": "ce2e5af197a7e16931a32470beec9750e6f6c3cb1b1572c936aec0638a6503a2"},
+    {"path": "pool/main/g/gcc-16/libgcc-s1_16-20260322-1ubuntu1_amd64.deb", "sha256": "2fb4d81c14fdf34251639ae82f5181f9f98480ea16125d535571ac1be9db3065"},
+    {"path": "pool/main/g/glibc/libc6_2.43-2ubuntu2.4_amd64.deb", "sha256": "a613b457f3ff9c84ebd28af8a05afdec22605ad9aed87c71e3a6ae5170aeb9ca"},
+    {"path": "pool/main/k/kmod/kmod_34.2-2ubuntu2_amd64.deb", "sha256": "5595fb6bb2fba1dc53e005e17d24a389450296bdc5defb19dbcc0aa0ae33ae91"},
+    {"path": "pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-3_amd64.deb", "sha256": "34365d611ccf1f717f90a92fbe52ed96ae1829ab9be363c68a83563322797f8f"},
+    {"path": "pool/main/o/openssl/libssl3t64_3.5.5-1ubuntu3.7_amd64.deb", "sha256": "3ff73e121f6cd4f19e80ab4329dfd914108b3936c9db3708200203a9b245b34d"},
+    {"path": "pool/main/z/zlib/zlib1g_1.3.dfsg+really1.3.1-1ubuntu3.1_amd64.deb", "sha256": "450d9322ac4e9baea0f9a74548a20fde73b078235c1f5d1fb7084c2638e33cdd"}
+  ]
+}
