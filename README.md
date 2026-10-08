@@ -142,3 +142,25 @@ successful guest attestation or a security assessment of the platform firmware.
 - `scripts/`: offline measurement, isolated launch, and test orchestration.
 - `docs/`: protocol specification, threat model, and audit findings.
 - `releases/`: public metadata only; no secret signing material.
+
+## Reboot recovery test (m0-v0.5.0)
+
+The guest requires one dedicated 256 MiB ext4 virtio disk with UUID
+`df050000-0000-4000-8000-000000000005`. It refuses a second virtio disk.
+A pre-provisioned `INIT_ALLOWED` flag authorizes creation once and is removed
+and flushed before creation starts. Subsequent boots require the full genesis
+record and matching encrypted files; incomplete state fails without regeneration.
+The state volume is synced and unmounted before the completion marker.
+
+The public `boot-challenge` file carries a fresh 32-byte hex challenge without
+changing the measured image or kernel command line. Each recovery report binds
+that challenge, capsule hash, chip-layer hash, and recovered seed fingerprint.
+The external test verifies the AMD chain, signature, policy, expected measurement,
+report binding, and unchanged first-boot hashes. This is a controlled orderly
+shutdown test, not a power-loss, anti-rollback, migration, or production audit.
+
+`scripts/reboot-test.py` runs on the host as root **after release provenance and
+asset hashes are verified**. It only uses the new `dh_tests/m0-v0.5.0` directory,
+stops the old isolated v0.4.0 test via its named QMP socket, and never signals the
+production guest. It performs two separate boots, a third corrupted-capsule boot,
+and restores the original capsule with all test VMs stopped.

@@ -1,7 +1,7 @@
 //! Local chip sealing only. Reports here are evidence, not verified approvals.
 use anyhow::{ensure, Context, Result};
 use hkdf::Hkdf;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sev::{
     firmware::guest::{AttestationReport, DerivedKey, Firmware, GuestFieldSelect},
     parser::ByteParser,
@@ -62,14 +62,14 @@ fn write_new(directory: &Path, name: &str, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct PublicRecord {
-    format: &'static str,
+    format: String,
     dummy_seed_sha256: String,
     capsule_sha256: String,
     chip_layer_sha256: String,
     attestation_report_sha256: String,
-    warning: &'static str,
+    warning: String,
 }
 
 pub fn create(directory: &Path) -> Result<()> {
@@ -92,12 +92,12 @@ pub fn create(directory: &Path) -> Result<()> {
     binding.update(hash(&layer));
     let report = firmware.get_report(Some(1), Some(binding.finalize().into()), Some(0))?;
     let record = PublicRecord {
-        format: "dummy-genesis-v1",
+        format: "dummy-genesis-v1".into(),
         dummy_seed_sha256: hex::encode(genesis.fingerprint),
         capsule_sha256: hex::encode(capsule_hash),
         chip_layer_sha256: hex::encode(hash(&layer)),
         attestation_report_sha256: hex::encode(hash(&report)),
-        warning: "Test evidence only. No certificate verification, release approval, or M1 handoff implemented.",
+        warning: "Test evidence only. No certificate verification, release approval, or M1 handoff implemented.".into(),
     };
     // Refuse an existing destination, including an existing symlink.
     fs::DirBuilder::new()
@@ -125,12 +125,35 @@ pub fn create(directory: &Path) -> Result<()> {
 }
 
 pub fn recover(directory: &Path) -> Result<()> {
+    recover_challenged(directory, [0; 32])
+}
+
+pub fn recover_challenged(directory: &Path, challenge: [u8; 32]) -> Result<()> {
     ensure!(
         fs::symlink_metadata(directory)?.is_dir(),
         "state path must be a directory"
     );
     let capsule = crate::read_record(&directory.join("seed.capsule"))?;
     let layer = crate::read_record(&directory.join("sk.chip-layer"))?;
+    let record: PublicRecord =
+        serde_json::from_slice(&crate::read_record(&directory.join("genesis.json"))?)?;
+    ensure!(
+        record.format == "dummy-genesis-v1",
+        "incomplete or invalid genesis record"
+    );
+    ensure!(
+        record.capsule_sha256 == hex::encode(hash(&capsule)),
+        "capsule record mismatch"
+    );
+    ensure!(
+        record.chip_layer_sha256 == hex::encode(hash(&layer)),
+        "chip layer record mismatch"
+    );
+    let original_report = crate::read_record(&directory.join("genesis-report.bin"))?;
+    ensure!(
+        record.attestation_report_sha256 == hex::encode(hash(&original_report)),
+        "genesis report mismatch"
+    );
     ensure!(layer.len() == LAYER_LEN, "invalid chip layer length");
     let mut firmware = Firmware::open().context("open /dev/sev-guest")?;
     let expected = context(&mut firmware, &hash(&capsule))?;
@@ -144,7 +167,23 @@ pub fn recover(directory: &Path) -> Result<()> {
     let mut sk = Zeroizing::new([0; 32]);
     sk.copy_from_slice(&plaintext);
     let seed = open_capsule(&sk, &capsule)?;
-    println!("dummy_seed_sha256={}", hex::encode(hash(seed.as_ref())));
+    let fingerprint = hash(seed.as_ref());
+    ensure!(
+        record.dummy_seed_sha256 == hex::encode(fingerprint),
+        "seed record mismatch"
+    );
+    let mut binding = Sha512::new();
+    binding.update(b"zns-tee-handoff/dummy-recovery/v1");
+    binding.update(challenge);
+    binding.update(hash(&capsule));
+    binding.update(hash(&layer));
+    binding.update(fingerprint);
+    let report = firmware.get_report(Some(1), Some(binding.finalize().into()), Some(0))?;
+    println!("dummy_seed_sha256={}", hex::encode(fingerprint));
+    println!("capsule_sha256={}", hex::encode(hash(&capsule)));
+    println!("chip_layer_sha256={}", hex::encode(hash(&layer)));
+    println!("recovery_challenge={}", hex::encode(challenge));
+    println!("recovery_report_hex={}", hex::encode(report));
     println!("m0_local_recovery=ok; no release or certificate verification performed");
     Ok(())
 }

@@ -14,12 +14,27 @@ halt_test() {
 /usr/bin/insmod /modules/tsm_report.ko || halt_test tsm_report
 /usr/bin/insmod /modules/sev-guest.ko || halt_test sev_guest
 [ -c /dev/sev-guest ] || halt_test missing_sev_guest
-echo "M0_TEST_BEGIN: dummy secrets; ephemeral state"
-/usr/local/bin/zns-tee-handoff m0 create /run/m0 || halt_test create
-/usr/local/bin/zns-tee-handoff m0 recover /run/m0 || halt_test recover
+# One dedicated, UUID-checked test volume; never mount an arbitrary host disk.
+[ -b /dev/vda ] || halt_test missing_test_disk
+[ ! -b /dev/vdb ] || halt_test unexpected_extra_disk
+/usr/local/bin/zns-tee-handoff check-test-disk /dev/vda || halt_test disk_identity
+"$BB" mkdir -p /state
+"$BB" mount -t ext4 -o nodev,nosuid,noexec /dev/vda /state || halt_test mount_state
+[ -f /state/boot-challenge ] && [ ! -L /state/boot-challenge ] || halt_test missing_challenge
+CHALLENGE=$("$BB" cat /state/boot-challenge)
+if [ -e /state/INIT_ALLOWED ]; then
+    [ ! -e /state/m0 ] || halt_test existing_state_with_init_flag
+    # Consume authorization before generation; interrupted creation cannot regenerate.
+    "$BB" rm /state/INIT_ALLOWED || halt_test consume_init
+    "$BB" sync || halt_test sync_init
+    /usr/local/bin/zns-tee-handoff m0 create /state/m0 || halt_test create
+fi
+/usr/local/bin/zns-tee-handoff m0 recover /state/m0 "$CHALLENGE" || halt_test recover
 echo "M0_GENESIS_METADATA_BEGIN"
-"$BB" cat /run/m0/genesis.json
+"$BB" cat /state/m0/genesis.json
 echo
 echo "M0_GENESIS_METADATA_END"
-echo "M0_TEST_COMPLETE: same-boot chip-layer recovery; not a reboot test"
+"$BB" sync || halt_test sync_state
+"$BB" umount /state || halt_test unmount_state
+echo "M0_TEST_COMPLETE: persistent state recovered and unmounted"
 while :; do "$BB" sleep 3600; done

@@ -1,4 +1,5 @@
 use anyhow::{bail, Context, Result};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use zns_tee_handoff::{hash, open_capsule, Genesis};
 
@@ -15,6 +16,25 @@ fn main() {
 fn run() -> Result<()> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     match args.as_slice() {
+        [command, device] if command == "check-test-disk" => {
+            let mut file = std::fs::File::open(device)?;
+            file.seek(SeekFrom::Start(1024))?;
+            let mut superblock = [0; 120];
+            file.read_exact(&mut superblock)?;
+            anyhow::ensure!(superblock[56..58] == [0x53, 0xef], "test disk is not ext4");
+            anyhow::ensure!(
+                hex::encode(&superblock[104..120]) == "df050000000040008000000000000005",
+                "unexpected test disk UUID"
+            );
+            Ok(())
+        }
+        [role, command, directory, challenge] if role == "m0" && command == "recover" => {
+            let bytes = hex::decode(challenge.to_string_lossy().as_ref())?;
+            let challenge: [u8; 32] = bytes
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("challenge must be 32 bytes"))?;
+            recover_challenged(Path::new(directory), challenge)
+        }
         [command] if command == "demo" => {
             let genesis = Genesis::generate()?;
             let recovered = open_capsule(&genesis.sk, &genesis.capsule)?;
@@ -67,4 +87,13 @@ fn read_record(path: &Path) -> Result<Vec<u8>> {
     );
     anyhow::ensure!(metadata.len() <= 16 * 1024, "record too large");
     std::fs::read(path).context("read record")
+}
+
+#[cfg(target_os = "linux")]
+fn recover_challenged(directory: &Path, challenge: [u8; 32]) -> Result<()> {
+    snp::recover_challenged(directory, challenge)
+}
+#[cfg(not(target_os = "linux"))]
+fn recover_challenged(_directory: &Path, _challenge: [u8; 32]) -> Result<()> {
+    bail!("requires Linux SNP guest")
 }

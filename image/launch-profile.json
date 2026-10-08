@@ -17,6 +17,6 @@
   "kernel": "vmlinuz",
   "initrd": "m0-initrd.img",
   "ovmf": "OVMF.amdsev.fd",
-  "state": "ephemeral tmpfs; no persistent host disks",
+  "state": "dedicated ext4 virtio test disk, UUID df050000-0000-4000-8000-000000000005",
   "network": "disabled"
 }

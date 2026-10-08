@@ -182,7 +182,7 @@ def main():
         "source_commit": commit, "expected_snp_measurement": measurement,
         "launch": profile, "pins": pins, "measurement_tool": "sev-snp-measure 0.0.13",
         "artifacts": artifacts,
-        "security_status": "dummy M0 only; live attestation verification, release policy enforcement, persistent reboot recovery, and M1 handoff not tested or implemented",
+        "security_status": "dummy M0 with persistent recovery test support; guest does not enforce release approval; M1 handoff not implemented; see external test evidence",
         "reproducibility_scope": "two clean GitHub runners must match; Ubuntu runner native build tools are not a hermetic toolchain"
     }
     (output / "release-manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
