@@ -121,6 +121,7 @@ pub fn create(directory: &Path) -> Result<()> {
     // The public report contains no seed or SK. Emit it without BusyBox applets.
     println!("attestation_report_hex={}", hex::encode(&report));
     println!("m0_created=ok; SK stored only as chip-wrapped ciphertext; no M1 handoff yet");
+    release_self_check();
     Ok(())
 }
 
@@ -185,5 +186,28 @@ pub fn recover_challenged(directory: &Path, challenge: [u8; 32]) -> Result<()> {
     println!("recovery_challenge={}", hex::encode(challenge));
     println!("recovery_report_hex={}", hex::encode(report));
     println!("m0_local_recovery=ok; no release or certificate verification performed");
+    release_self_check();
     Ok(())
+}
+
+/// Live launch measurement from a fresh SNP report.
+pub fn live_measurement() -> Result<[u8; 48]> {
+    let mut firmware = Firmware::open().context("open /dev/sev-guest")?;
+    let raw = firmware.get_report(Some(1), Some([0; 64]), Some(0))?;
+    let report = AttestationReport::from_bytes(&raw)?;
+    ensure!(report.measurement != [0; 48], "missing launch measurement");
+    Ok(report.measurement)
+}
+
+/// Non-fatal release self-check; only adds verdict lines to the boot output.
+fn release_self_check() {
+    let check = zns_tee_handoff::verify::self_check(
+        live_measurement().ok(),
+        zns_tee_handoff::verify::baked_tag(),
+        &zns_tee_handoff::verify::GitHubRelease::default(),
+    );
+    println!("release_self_check={}", check.status);
+    if !check.detail.is_empty() {
+        println!("release_self_check_detail={}", check.detail);
+    }
 }

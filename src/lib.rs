@@ -1,4 +1,5 @@
 //! Dummy custody primitives. These do not authorize a release or implement handoff.
+pub mod verify;
 use anyhow::{bail, ensure, Result};
 use chacha20poly1305::{
     aead::{Aead, KeyInit, Payload},

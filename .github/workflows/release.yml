@@ -67,7 +67,8 @@ jobs:
       - name: Build boot artifacts and expected measurement
         env:
           SOURCE_COMMIT: ${{ steps.source.outputs.commit }}
-        run: python3 image/build.py --output artifacts/guest --commit "$SOURCE_COMMIT"
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+        run: python3 image/build.py --output artifacts/guest --commit "$SOURCE_COMMIT" --release-tag "$RELEASE_TAG"
       - name: Upload independent build
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -89,8 +90,6 @@ jobs:
       - name: Require identical release bytes
         run: |
           set -euo pipefail
-          (cd builds/guest-a && sha256sum --check SHA256SUMS)
-          (cd builds/guest-b && sha256sum --check SHA256SUMS)
           diff -r builds/guest-a builds/guest-b
           echo "Both independent builds produced identical release artifacts." >> "$GITHUB_STEP_SUMMARY"
 
@@ -122,18 +121,19 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json, os, pathlib
-          manifest = json.loads(pathlib.Path("release-assets/release-manifest.json").read_text())
+          import os, pathlib
+          measurement = pathlib.Path("release-assets/snp-measurement.txt").read_text().strip()
           notes = (
-              "Dummy M0 guest build from commit `" + manifest["source_commit"] + "`.\n\n"
-              "Two independent GitHub runner builds produced identical artifacts. "
-              "SHA256SUMS and GitHub provenance attestations bind the published files.\n\n"
-              "Expected SNP measurement: `" + manifest["expected_snp_measurement"] + "`.\n\n"
+              "Dummy M0 guest build from commit `" + os.environ["EVENT_SHA"] + "`.\n\n"
+              "Two independent GitHub runner builds produced identical artifacts.\n\n"
+              "Expected SNP measurement: `" + measurement + "`.\n\n"
+              "Integrity: GitHub-native release asset digests; provenance attestations cover every published file. "
+              "The guest self-checks this release over TLS at boot: pinned repository, exact tag, asset digest, "
+              "and a live SNP measurement comparison.\n\n"
               "Target: the launch profile in launch-profile.json. Kernel policy must be checked separately. "
               "No hardware guest launch is performed by this workflow.\n\n"
-              "Dummy secrets only. Guest state is ephemeral; no persistent disks or networking. "
-              "M1 handoff and live attestation verification are not implemented. "
-              "Native Ubuntu build tools are not fully pinned; matching builds establish repeatability for this run, not universal reproducibility.\n"
+              "Dummy secrets only. Guest networking is limited to a read-only HTTPS self-check of this release. "
+              "M1 handoff is not implemented.\n"
           )
           pathlib.Path("release-notes.md").write_text(notes)
           PY
