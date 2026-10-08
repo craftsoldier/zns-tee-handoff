@@ -152,12 +152,16 @@ def main():
     install_member(pins["ovmf"], output / "OVMF.amdsev.fd", work / "ovmf", cache, archive)
     modules = work / "kernel-modules"
     extract(pins["modules"], modules, cache, archive)
-    base = modules / "usr/lib/modules" / pins["kernel_version"] / "kernel/drivers/virt/coco"
-    for relative, name in (("guest/tsm_report.ko.zst", "tsm_report.ko"), ("sev-guest/sev-guest.ko.zst", "sev-guest.ko"), ("net/virtio_net.ko.zst", "virtio_net.ko")):
-        source = base / relative
+    modules_root = modules / "usr/lib/modules" / pins["kernel_version"] / "kernel"
+    for relative, name in (
+        ("virt/coco/guest/tsm_report.ko.zst", "tsm_report.ko"),
+        ("virt/coco/sev-guest/sev-guest.ko.zst", "sev-guest.ko"),
+        ("net/virtio_net.ko.zst", "virtio_net.ko"),
+    ):
+        source = modules_root / relative
         compressed = True
         if not source.exists():
-            source = base / relative.removesuffix(".zst")
+            source = modules_root / relative.removesuffix(".zst")
             compressed = False
         with (stage / "modules" / name).open("xb") as target:
             subprocess.run(
