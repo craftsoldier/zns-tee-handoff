@@ -106,7 +106,7 @@ jobs:
   publish:
     name: Attest and publish tagged release
     needs: verify
-    if: startsWith(github.ref, 'refs/tags/m0-v')
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
