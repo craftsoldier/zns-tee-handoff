@@ -35,7 +35,7 @@ TAG_M0 = sys.argv[2] if len(sys.argv) > 2 else ""
 TAG_M1 = sys.argv[3] if len(sys.argv) > 3 else ""
 REPO = "craftsoldier/zns-tee-handoff"
 API = f"https://api.github.com/repos/{REPO}/releases/tags"
-ROOT = Path("/home/ubuntu/dh_tests/migration-m1-v0.2.0")
+ROOT = Path("/home/ubuntu/dh_tests/migration")
 ASSETS_M0 = ROOT / "assets-m0"
 ASSETS_M1 = ROOT / "assets-m1"
 RUNTIME = ROOT / "runtime"
@@ -170,6 +170,11 @@ def phase_verify():
 
 
 def phase_genesis():
+    try:
+        fetch_release("custody-v1")
+        raise RuntimeError("custody-v1 already exists; delete it to start a fresh lineage")
+    except urllib.error.HTTPError as error:
+        require(error.code == 404, f"unexpected api status {error.code}")
     release = fetch_release(TAG_M0)
     download_asset(release, "m0-initrd.img", ASSETS_M0)
     download_asset(release, "vmlinuz", ASSETS_M0)
