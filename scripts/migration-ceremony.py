@@ -28,7 +28,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-if len(sys.argv) < 3 or sys.argv[1] not in ("verify", "genesis", "announce", "migration", "verify-m1"):
+if len(sys.argv) < 3 or sys.argv[1] not in ("verify", "genesis", "recover", "announce", "migration", "verify-m1"):
     raise SystemExit(__doc__)
 PHASE = sys.argv[1]
 TAG_M0 = sys.argv[2] if len(sys.argv) > 2 else ""
@@ -209,6 +209,22 @@ def phase_genesis():
     print(f"then run: migration-ceremony.py announce {TAG_M0} {TAG_M1}")
 
 
+def phase_recover():
+    print("[recover:1] fetching image assets")
+    release = fetch_release(TAG_M0)
+    download_asset(release, "m0-initrd.img", ASSETS_M0)
+    download_asset(release, "vmlinuz", ASSETS_M0)
+    download_asset(release, "OVMF.amdsev.fd", ASSETS_M0)
+    log = RUNTIME / "m0.log"
+    print("[recover:2] booting M0 (recovery path: custody-v1 -> armed listener)")
+    boot(NAME_M0, ASSETS_M0, RUNTIME / "m0.console", log)
+    content = wait_for(log, "m0_handoff_armed=ok")
+    print("[recover:3] armed marker found")
+    require("state_recovered=ok" in content, "custody state not recovered")
+    require("release_self_check=accept" in content, "self-check not accepted")
+    print(f"recover ok: M0 resurrected from custody-v1; seed {fingerprint(log)}; armed")
+
+
 def phase_announce():
     require(fetch_release("custody-v1").get("tag_name") == "custody-v1",
             "custody-v1 must exist before the successor announces")
@@ -336,7 +352,7 @@ if __name__ == "__main__":
     try:
         require(os.geteuid() == 0, "run as root on the isolated SNP test host")
         RUNTIME.mkdir(parents=True, exist_ok=True)
-        {"verify": phase_verify, "genesis": phase_genesis, "announce": phase_announce,
+        {"verify": phase_verify, "genesis": phase_genesis, "recover": phase_recover, "announce": phase_announce,
          "migration": phase_handoff, "verify-m1": phase_verify_m1}[PHASE]()
     except Exception as error:
         import traceback

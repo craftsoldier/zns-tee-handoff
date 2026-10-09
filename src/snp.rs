@@ -247,8 +247,20 @@ fn successor_boot(firmware: &mut Firmware, chip_key: &[u8; 32]) -> Result<()> {
     println!("m1_announced=ok; waiting for the handoff wrap on the console");
 
     let stdin = std::io::stdin();
-    let (ephemeral_pubkey, wrap_blob) = read_wrap_block(&mut stdin.lock())?;
-    let seed = state::unwrap_seed(&secret, &ephemeral_pubkey, &wrap_blob)?;
+    let mut reader = stdin.lock();
+    // The emulated UART can drop bytes from bursts, so a wrap block may arrive
+    // garbled. That must never kill this session: `d` dies with the process,
+    // and losing it forces a full re-announce. Bad blocks are rejected and a
+    // fresh WRAP block awaited instead.
+    let seed = loop {
+        let (ephemeral_pubkey, wrap_blob) = read_wrap_block(&mut reader)?;
+        match state::unwrap_seed(&secret, &ephemeral_pubkey, &wrap_blob) {
+            Ok(seed) => break seed,
+            Err(error) => {
+                println!("m1_wrap_error={error}; waiting for a fresh wrap")
+            }
+        }
+    };
     let fingerprint = hash(&seed);
     let measurement = live_measurement()?;
     let blob = state::seal(chip_key, &seed, &measurement, POLICY)?;
@@ -270,28 +282,43 @@ fn read_wrap_block(stdin: &mut impl BufRead) -> Result<(Vec<u8>, Vec<u8>)> {
     for line in stdin.lines() {
         let line = line?;
         if line == "WRAP_BEGIN" {
+            if inside {
+                println!("m1_wrap_noise=ok; restart at a fresh WRAP_BEGIN");
+            }
+            ephemeral_pubkey = None;
+            blob = None;
             inside = true;
             continue;
         }
-        if inside {
-            if line == "WRAP_END" {
-                break;
+        if !inside {
+            continue;
+        }
+        if line == "WRAP_END" {
+            match (ephemeral_pubkey.take(), blob.take()) {
+                (Some(pubkey), Some(wrap)) => return Ok((pubkey, wrap)),
+                _ => println!("m1_wrap_noise=ok; incomplete block, continuing"),
             }
-            if let Some(value) = line.strip_prefix("ephemeral_pubkey=") {
-                ephemeral_pubkey = Some(hex::decode(value)?);
-            }
-            if let Some(value) = line.strip_prefix("blob=") {
-                blob = Some(hex::decode(value)?);
-            }
+            inside = false;
+            continue;
+        }
+        let field = |line: &str, name: &str| -> Option<Vec<u8>> {
+            line.strip_prefix(name)
+                .and_then(|value| hex::decode(value).ok())
+                .or_else(|| {
+                    if line.starts_with(name) {
+                        println!("m1_wrap_noise=ok; discarding bad {name}, continuing");
+                    }
+                    None
+                })
+        };
+        if let Some(value) = field(&line, "ephemeral_pubkey=") {
+            ephemeral_pubkey = Some(value);
+        }
+        if let Some(value) = field(&line, "blob=") {
+            blob = Some(value);
         }
     }
-    let Some(ephemeral_pubkey) = ephemeral_pubkey else {
-        anyhow::bail!("wrap block missing ephemeral_pubkey");
-    };
-    let Some(blob) = blob else {
-        anyhow::bail!("wrap block missing blob");
-    };
-    Ok((ephemeral_pubkey, blob))
+    anyhow::bail!("console closed before a complete wrap arrived")
 }
 
 /// Non-fatal release self-check; only adds verdict lines to the boot output.
