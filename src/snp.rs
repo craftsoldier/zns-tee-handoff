@@ -68,7 +68,10 @@ pub fn boot(challenge: [u8; 32]) -> Result<()> {
             if is_successor() {
                 successor_boot(&mut firmware, &chip_key)?;
             } else {
-                genesis_state(&mut firmware, &chip_key)?;
+                let seed = genesis_state(&mut firmware, &chip_key)?;
+                release_self_check();
+                println!("M0_TEST_COMPLETE: genesis done; handoff armed");
+                handoff_listen(&seed, &source)?;
             }
         }
         Some(blob) => {
@@ -77,9 +80,9 @@ pub fn boot(challenge: [u8; 32]) -> Result<()> {
                 // This generation holds custody: recover, then offer handoff.
                 let seed = state::open(&chip_key, &blob)?;
                 recover_state(&mut firmware, &blob, &seed, challenge)?;
-                println!("M0_TEST_COMPLETE: custody recovered; handoff check next");
+                println!("M0_TEST_COMPLETE: custody recovered; handoff armed");
                 if !is_successor() {
-                    handoff_check(&seed, &source)?;
+                    handoff_listen(&seed, &source)?;
                 }
             } else if is_successor() {
                 // The current state is sealed for a different generation:
@@ -139,37 +142,46 @@ fn recover_state(
     Ok(())
 }
 
-/// Custodian side of the seam: exactly one handoff check per boot. Fetch the
-/// newest successor release carrying an announcement, verify it, and print the
-/// ECIES-wrapped seed. The console carries nothing inbound; the operator
-/// triggers a re-check by restarting this image.
-fn handoff_check(seed: &[u8; 32], source: &verify::GitHubRelease) -> Result<()> {
-    let releases = verify::fetch_release_list(source)?;
-    let mut successor = None;
-    for release in &releases {
-        let Some(tag) = release["tag_name"].as_str() else {
+/// Custodian side of the seam: ARMED after genesis or recovery. Blocks on the
+/// console waiting for `HANDOFF <m1-tag>`; the tag only names the successor —
+/// the announcement is fetched from that release (GitHub, digest-verified).
+/// Garbage on the console is ignored: the fail-safe is "no handoff, remain
+/// custodian", and the trigger can be re-sent at any time.
+fn handoff_listen(seed: &[u8; 32], source: &verify::GitHubRelease) -> Result<()> {
+    println!("m0_handoff_armed=ok; console trigger: HANDOFF <m1-tag>");
+    let stdin = std::io::stdin();
+    for line in stdin.lock().lines() {
+        let Ok(line) = line else { return Ok(()) };
+        let Some(tag) = line.strip_prefix("HANDOFF ") else {
             continue;
         };
         if !tag.starts_with("m1-v") {
+            println!("m0_handoff_ignored=ok; tag must match m1-v*");
             continue;
         }
-        let Some(assets) = release["assets"].as_array() else {
-            continue;
-        };
-        if let Some(announce) = assets
-            .iter()
-            .find(|a| a["name"].as_str() == Some("announcement.txt"))
-        {
-            successor = Some((tag.to_string(), announce.clone(), assets.clone()));
-            break;
+        match self_handoff(seed, source, tag) {
+            Ok(()) => {
+                println!(
+                    "m0_handoff_complete=ok; seed wrapped for the successor announced in {tag}"
+                );
+                return Ok(());
+            }
+            Err(error) => {
+                println!("m0_handoff_error={error}; remaining standing custodian");
+            }
         }
     }
-    let Some((tag, announce_asset, assets)) = successor else {
-        println!("m0_handoff_idle=ok; no successor announcement published yet");
-        return Ok(());
-    };
-    println!("m0_handoff_check=ok; successor found in {tag}");
+    Ok(())
+}
 
+/// Verify the successor announcement published inside `tag`'s release and
+/// print the ECIES-wrapped seed.
+fn self_handoff(seed: &[u8; 32], source: &verify::GitHubRelease, tag: &str) -> Result<()> {
+    let release = verify::fetch_release(source, tag)?
+        .ok_or_else(|| anyhow::anyhow!("successor release not found"))?;
+    let assets = release["assets"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("successor release has no assets"))?;
     let find = |name: &str| {
         assets
             .iter()
@@ -178,8 +190,9 @@ fn handoff_check(seed: &[u8; 32], source: &verify::GitHubRelease) -> Result<()> 
             .ok_or_else(|| anyhow::anyhow!("successor release missing {name}"))
     };
     let measurement_asset = find("snp-measurement.txt")?;
+    let announcement_asset = find("announcement.txt")?;
     let measurement_bytes = verify::download_asset_checked(source, &measurement_asset)?;
-    let announcement_bytes = verify::download_asset_checked(source, &announce_asset)?;
+    let announcement_bytes = verify::download_asset_checked(source, &announcement_asset)?;
 
     let measurement_text = std::str::from_utf8(&measurement_bytes)?.trim();
     ensure!(
@@ -219,12 +232,9 @@ fn handoff_check(seed: &[u8; 32], source: &verify::GitHubRelease) -> Result<()> 
     println!("ephemeral_pubkey={}", hex::encode(&wrap.ephemeral_pubkey));
     println!("blob={}", hex::encode(&wrap.blob));
     println!("WRAP_END");
-    println!("m0_handoff_complete=ok; seed wrapped for the successor announced in {tag}");
     Ok(())
 }
 
-/// Successor side of the seam: announce an ephemeral key, wait for the wrap,
-/// re-seal the seed under this image's own measurement.
 fn successor_boot(firmware: &mut Firmware, chip_key: &[u8; 32]) -> Result<()> {
     let secret = SecretKey::random(&mut rand::rngs::OsRng);
     let pubkey = secret.public_key().to_encoded_point(false);

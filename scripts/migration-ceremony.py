@@ -11,7 +11,7 @@ Usage, in order:
   migration-ceremony.py genesis TAG_M0      boot M0: fresh seed -> custody-v1
   migration-ceremony.py announce TAG_M0 TAG_M1
                                             boot M1: announce (M1 stays running)
-  migration-ceremony.py handoff TAG_M0 TAG_M1
+  migration-ceremony.py migration TAG_M0 TAG_M1
                                             trigger M0, relay wrap to M1,
                                             capture custody-v2, stop M0 and M1
   migration-ceremony.py verify-m1 TAG_M0 TAG_M1
@@ -28,7 +28,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-if len(sys.argv) < 3 or sys.argv[1] not in ("verify", "genesis", "announce", "handoff", "verify-m1"):
+if len(sys.argv) < 3 or sys.argv[1] not in ("verify", "genesis", "announce", "migration", "verify-m1"):
     raise SystemExit(__doc__)
 PHASE = sys.argv[1]
 TAG_M0 = sys.argv[2] if len(sys.argv) > 2 else ""
@@ -228,7 +228,7 @@ def phase_announce():
     print("RELAY NOW (authenticated machine):")
     print(f"  scp {RUNTIME}/announcement.txt .")
     print(f"  gh release upload {TAG_M1} announcement.txt --repo {REPO}")
-    print(f"then run: migration-ceremony.py handoff {TAG_M0} {TAG_M1}")
+    print(f"then run: migration-ceremony.py migration {TAG_M0} {TAG_M1}")
 
 
 def phase_handoff():
