@@ -16,7 +16,6 @@ use std::{fmt, io::Read, time::Duration};
 
 const API_BASE: &str = "https://api.github.com";
 const REPO: &str = "craftsoldier/zns-tee-handoff";
-const TAG_PREFIXES: [&str; 2] = ["m0-v", "m1-v"];
 const MEASUREMENT_ASSET: &str = "snp-measurement.txt";
 const ASSET_HOSTS: [&str; 3] = [
     "api.github.com",
@@ -29,6 +28,21 @@ const MEASUREMENT_HEX_LEN: usize = 96;
 /// Tag injected at build time from the publishing workflow (`RELEASE_TAG`).
 pub fn baked_tag() -> Option<&'static str> {
     option_env!("RELEASE_TAG").filter(|tag| !tag.is_empty())
+}
+
+/// Parse a release tag `vMAJOR.MINOR.PATCH` into its custody generation
+/// (the major version). Legacy `m0-v*`/`m1-v*` tags do not parse.
+pub fn parse_generation(tag: &str) -> Option<u32> {
+    let rest = tag.strip_prefix('v')?;
+    let mut parts = rest.split('.');
+    let major = parts.next()?.parse::<u32>().ok()?;
+    let minor = parts.next()?.parse::<u32>().ok()?;
+    let patch = parts.next()?.parse::<u32>().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    let _ = (minor, patch);
+    Some(major)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -216,8 +230,8 @@ pub fn self_check(
             }
         },
     };
-    if !TAG_PREFIXES.iter().any(|prefix| tag.starts_with(prefix)) {
-        return reject("tag does not match the policy prefixes");
+    if parse_generation(tag).is_none() {
+        return reject("tag does not match vX.Y.Z");
     }
     let release_url = format!("{API_BASE}/repos/{REPO}/releases/tags/{tag}");
     let fetched = match source.get(&release_url, "application/vnd.github+json") {
@@ -295,12 +309,30 @@ pub fn self_check(
 
 #[cfg(test)]
 mod tests {
+    use super::parse_generation;
+
+    #[test]
+    fn generation_is_the_major_version() {
+        assert_eq!(parse_generation("v1.0.0"), Some(1));
+        assert_eq!(parse_generation("v2.5.0"), Some(2));
+    }
+
+    #[test]
+    fn legacy_and_malformed_tags_do_not_parse() {
+        assert_eq!(parse_generation("m0-v0.5.0"), None);
+        assert_eq!(parse_generation("m1-v0.4.0"), None);
+        assert_eq!(parse_generation("v1.0"), None);
+        assert_eq!(parse_generation("v1.0.0.0"), None);
+        assert_eq!(parse_generation("v1.0.0-rc1"), None);
+        assert_eq!(parse_generation("custody-v1"), None);
+    }
+
     use super::*;
     use std::cell::Cell;
 
-    const FIXTURE: &str = include_str!("../tests/fixtures/api-release-m0-v0.5.0.json");
+    const FIXTURE: &str = include_str!("../tests/fixtures/api-release-v1.0.0.json");
     const MEASUREMENT_HEX: &str = "c0ac09eb9957dbee62a4479d376ee5a2e889afd446dc857bdbfc7d1e7e547574e57f55c9ec79b98edad0fc82c1d8ea18";
-    const TAG: &str = "m0-v0.5.0";
+    const TAG: &str = "v1.0.0";
 
     fn measurement() -> [u8; 48] {
         hex::decode(MEASUREMENT_HEX).unwrap().try_into().unwrap()
@@ -412,7 +444,7 @@ mod tests {
         let mut source = FnSource::real();
         source.release = Ok({
             let mut value = fixture();
-            value["tag_name"] = Value::String("m0-v0.4.0".into());
+            value["tag_name"] = Value::String("v1.1.0".into());
             value
         });
         let check = self_check(Some(measurement()), Some(TAG), &source);

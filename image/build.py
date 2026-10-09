@@ -87,7 +87,7 @@ def main():
     args = parser.parse_args()
     release_tag = args.release_tag.strip()
     if release_tag and (
-        not release_tag.startswith(("m0-v", "m1-v"))
+        not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", release_tag)
         or "/" in release_tag
         or any(c.isspace() for c in release_tag)
     ):

@@ -2,7 +2,7 @@
   "url": "https://api.github.com/repos/craftsoldier/zns-tee-handoff/releases/407253707",
   "assets_url": "https://api.github.com/repos/craftsoldier/zns-tee-handoff/releases/407253707/assets",
   "upload_url": "https://uploads.github.com/repos/craftsoldier/zns-tee-handoff/releases/407253707/assets{?name,label}",
-  "html_url": "https://github.com/craftsoldier/zns-tee-handoff/releases/tag/m0-v0.5.0",
+  "html_url": "https://github.com/craftsoldier/zns-tee-handoff/releases/tag/v1.0.0",
   "id": 407253707,
   "author": {
     "login": "github-actions[bot]",
@@ -26,9 +26,9 @@
     "site_admin": false
   },
   "node_id": "RE_kwDOVBfJyM4YRjLL",
-  "tag_name": "m0-v0.5.0",
+  "tag_name": "v1.0.0",
   "target_commitish": "main",
-  "name": "m0-v0.5.0 \u2014 measured M0 test guest",
+  "name": "v1.0.0 \u2014 measured M0 test guest",
   "draft": false,
   "immutable": false,
   "prerelease": true,
@@ -70,7 +70,7 @@
       "download_count": 1,
       "created_at": "2026-10-08T20:52:37Z",
       "updated_at": "2026-10-08T20:52:37Z",
-      "browser_download_url": "https://github.com/craftsoldier/zns-tee-handoff/releases/download/m0-v0.5.0/launch-profile.json"
+      "browser_download_url": "https://github.com/craftsoldier/zns-tee-handoff/releases/download/v1.0.0/launch-profile.json"
     },
     {
       "url": "https://api.github.com/repos/craftsoldier/zns-tee-handoff/releases/assets/622977611",
@@ -106,7 +106,7 @@
       "download_count": 1,
       "created_at": "2026-10-08T20:52:37Z",
       "updated_at": "2026-10-08T20:52:37Z",
-      "browser_download_url": "https://github.com/craftsoldier/zns-tee-handoff/releases/download/m0-v0.5.0/m0-initrd.img"
+      "browser_download_url": "https://github.com/craftsoldier/zns-tee-handoff/releases/download/v1.0.0/m0-initrd.img"
     },
     {
       "url": "https://api.github.com/repos/craftsoldier/zns-tee-handoff/releases/assets/622977619",
@@ -142,7 +142,7 @@
       "download_count": 1,
       "created_at": "2026-10-08T20:52:37Z",
       "updated_at": "2026-10-08T20:52:37Z",
-      "browser_download_url": "https://github.com/craftsoldier/zns-tee-handoff/releases/download/m0-v0.5.0/OVMF.amdsev.fd"
+      "browser_download_url": "https://github.com/craftsoldier/zns-tee-handoff/releases/download/v1.0.0/OVMF.amdsev.fd"
     },
     {
       "url": "https://api.github.com/repos/craftsoldier/zns-tee-handoff/releases/assets/622977612",
@@ -178,7 +178,7 @@
       "download_count": 2,
       "created_at": "2026-10-08T20:52:37Z",
       "updated_at": "2026-10-08T20:52:37Z",
-      "browser_download_url": "https://github.com/craftsoldier/zns-tee-handoff/releases/download/m0-v0.5.0/release-manifest.json"
+      "browser_download_url": "https://github.com/craftsoldier/zns-tee-handoff/releases/download/v1.0.0/release-manifest.json"
     },
     {
       "url": "https://api.github.com/repos/craftsoldier/zns-tee-handoff/releases/assets/622977618",
@@ -214,7 +214,7 @@
       "download_count": 0,
       "created_at": "2026-10-08T20:52:37Z",
       "updated_at": "2026-10-08T20:52:37Z",
-      "browser_download_url": "https://github.com/craftsoldier/zns-tee-handoff/releases/download/m0-v0.5.0/SHA256SUMS"
+      "browser_download_url": "https://github.com/craftsoldier/zns-tee-handoff/releases/download/v1.0.0/SHA256SUMS"
     },
     {
       "url": "https://api.github.com/repos/craftsoldier/zns-tee-handoff/releases/assets/622977660",
@@ -250,7 +250,7 @@
       "download_count": 1,
       "created_at": "2026-10-08T20:52:37Z",
       "updated_at": "2026-10-08T20:52:37Z",
-      "browser_download_url": "https://github.com/craftsoldier/zns-tee-handoff/releases/download/m0-v0.5.0/snp-measurement.txt"
+      "browser_download_url": "https://github.com/craftsoldier/zns-tee-handoff/releases/download/v1.0.0/snp-measurement.txt"
     },
     {
       "url": "https://api.github.com/repos/craftsoldier/zns-tee-handoff/releases/assets/622977659",
@@ -286,7 +286,7 @@
       "download_count": 1,
       "created_at": "2026-10-08T20:52:37Z",
       "updated_at": "2026-10-08T20:52:38Z",
-      "browser_download_url": "https://github.com/craftsoldier/zns-tee-handoff/releases/download/m0-v0.5.0/vmlinuz"
+      "browser_download_url": "https://github.com/craftsoldier/zns-tee-handoff/releases/download/v1.0.0/vmlinuz"
     },
     {
       "url": "https://api.github.com/repos/craftsoldier/zns-tee-handoff/releases/assets/622977674",
@@ -322,10 +322,10 @@
       "download_count": 1,
       "created_at": "2026-10-08T20:52:37Z",
       "updated_at": "2026-10-08T20:52:38Z",
-      "browser_download_url": "https://github.com/craftsoldier/zns-tee-handoff/releases/download/m0-v0.5.0/zns-tee-handoff"
+      "browser_download_url": "https://github.com/craftsoldier/zns-tee-handoff/releases/download/v1.0.0/zns-tee-handoff"
     }
   ],
-  "tarball_url": "https://api.github.com/repos/craftsoldier/zns-tee-handoff/tarball/m0-v0.5.0",
-  "zipball_url": "https://api.github.com/repos/craftsoldier/zns-tee-handoff/zipball/m0-v0.5.0",
+  "tarball_url": "https://api.github.com/repos/craftsoldier/zns-tee-handoff/tarball/v1.0.0",
+  "zipball_url": "https://api.github.com/repos/craftsoldier/zns-tee-handoff/zipball/v1.0.0",
   "body": "Dummy M0 guest build from commit `685e427fdfb5dc26fa5db634fd0706b59b8ed493`.\n\nTwo independent GitHub runner builds produced identical artifacts. SHA256SUMS and GitHub provenance attestations bind the published files.\n\nExpected SNP measurement: `c0ac09eb9957dbee62a4479d376ee5a2e889afd446dc857bdbfc7d1e7e547574e57f55c9ec79b98edad0fc82c1d8ea18`.\n\nTarget: the launch profile in launch-profile.json. Kernel policy must be checked separately. No hardware guest launch is performed by this workflow.\n\nDummy secrets only. Guest state is ephemeral; no persistent disks or networking. M1 handoff and live attestation verification are not implemented. Native Ubuntu build tools are not fully pinned; matching builds establish repeatability for this run, not universal reproducibility.\n"
 }

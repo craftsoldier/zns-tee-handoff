@@ -1,11 +1,14 @@
 //! Stateless seeded boot plus the M0→M1 handoff seam.
 //!
-//! Roles are selected by the baked release tag:
-//! - `m0-v*` (custodian): fetch-or-create the custody state, then listen on
-//!   the console for `HANDOFF <m1-tag>` and wrap the seed for the successor
-//!   announced inside that release.
-//! - `m1-v*` (successor): announce an ephemeral ECIES key on the console and
-//!   wait for the wrap; re-seal the seed under this image's own measurement.
+//! Roles are selected by the baked release tag's major version (the custody
+//! generation):
+//! - generation 1 `v1.x` (custodian): fetch-or-create the custody state, then
+//!   listen on the console for `HANDOFF <next-generation tag>` and wrap the
+//!   seed for the successor announced inside that release.
+//! - generation >= 2 `v2.x+` (successor): announce an ephemeral ECIES key on
+//!   the console and wait for the wrap; re-seal the seed under this image's
+//!   own measurement. A successor that holds custody becomes the custodian
+//!   for the next generation.
 //!
 //! Everything crossing the console is either chip-signed (reports) or
 //! ciphertext to a key whose announcement was pinned by an immutable GitHub
@@ -49,8 +52,14 @@ fn chip_key(firmware: &mut Firmware) -> Result<Zeroizing<[u8; 32]>> {
     Ok(key)
 }
 
+/// The baked release tag's major version is this image's custody generation;
+/// generation >= 2 images are successors until they hold custody.
+fn generation() -> Option<u32> {
+    verify::baked_tag().and_then(verify::parse_generation)
+}
+
 fn is_successor() -> bool {
-    verify::baked_tag().is_some_and(|tag| tag.starts_with("m1-v"))
+    generation().is_some_and(|generation| generation >= 2)
 }
 
 /// Fetch or create the custody state, then — as custodian — listen for a
@@ -81,9 +90,10 @@ pub fn boot(challenge: [u8; 32]) -> Result<()> {
                 let seed = state::open(&chip_key, &blob)?;
                 recover_state(&mut firmware, &blob, &seed, challenge)?;
                 println!("M0_TEST_COMPLETE: custody recovered; handoff armed");
-                if !is_successor() {
-                    handoff_listen(&seed, &source)?;
-                }
+                // The custody holder is the custodian, whatever its
+                // generation: a successor that has taken custody arms for
+                // the next handoff.
+                handoff_listen(&seed, &source)?;
             } else if is_successor() {
                 // The current state is sealed for a different generation:
                 // announce and take custody.
@@ -148,15 +158,19 @@ fn recover_state(
 /// Garbage on the console is ignored: the fail-safe is "no handoff, remain
 /// custodian", and the trigger can be re-sent at any time.
 fn handoff_listen(seed: &[u8; 32], source: &verify::GitHubRelease) -> Result<()> {
-    println!("m0_handoff_armed=ok; console trigger: HANDOFF <m1-tag>");
+    println!("m0_handoff_armed=ok; console trigger: HANDOFF <next-generation tag>");
     let stdin = std::io::stdin();
     for line in stdin.lock().lines() {
         let Ok(line) = line else { return Ok(()) };
         let Some(tag) = line.strip_prefix("HANDOFF ") else {
             continue;
         };
-        if !tag.starts_with("m1-v") {
-            println!("m0_handoff_ignored=ok; tag must match m1-v*");
+        let Some(next) = verify::parse_generation(tag) else {
+            println!("m0_handoff_ignored=ok; tag must be vX.Y.Z");
+            continue;
+        };
+        if generation().is_none_or(|generation| next != generation + 1) {
+            println!("m0_handoff_ignored=ok; tag must be the next generation");
             continue;
         }
         match self_handoff(seed, source, tag) {
