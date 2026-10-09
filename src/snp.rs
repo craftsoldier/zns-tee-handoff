@@ -8,7 +8,7 @@ use sev::{
 };
 use sha2::{Digest, Sha256, Sha512};
 use zeroize::Zeroizing;
-use zns_tee_handoff::{random_secret, state, verify};
+use zns_tee_handoff::{hash, random_secret, state, verify};
 
 const POLICY: u64 = 0x30000;
 
