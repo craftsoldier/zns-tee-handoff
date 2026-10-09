@@ -72,7 +72,10 @@ pub fn boot(challenge: [u8; 32]) -> Result<()> {
         release_self_check();
     } else {
         match state::fetch_custody_state(&source)? {
-            None => genesis_state(&mut firmware, &chip_key)?,
+            None => {
+                genesis_state(&mut firmware, &chip_key)?;
+                release_self_check();
+            }
             Some(blob) => {
                 let seed = state::open(&chip_key, &blob)?;
                 recover_state(&mut firmware, &blob, &seed, challenge)?;
