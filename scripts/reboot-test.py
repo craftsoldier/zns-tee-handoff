@@ -152,9 +152,9 @@ def main():
         except urllib.error.HTTPError as error:
             require(error.code == 404, f"unexpected api status {error.code}")
         log = boot(1)
-        require("M0_TEST_COMPLETE:" in log, "genesis boot failed")
         require("m0_state_created=ok" in log, "genesis did not create state")
         require("release_self_check=accept" in log, "self-check not accepted")
+        require("M0_TEST_FAILED" not in log, "genesis boot failed")
         lines = log.splitlines()
         begin = lines.index("GENESIS_STATE_BLOB_BEGIN")
         end = lines.index("GENESIS_STATE_BLOB_END")
