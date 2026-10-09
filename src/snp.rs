@@ -3,7 +3,7 @@
 //! Roles are selected by the baked release tag's major version (the custody
 //! generation):
 //! - generation 1 `v1.x` (custodian): fetch-or-create the custody state, then
-//!   listen on the console for `HANDOFF <next-generation tag>` and wrap the
+//!   listen on the console for `MIGRATION <next-generation tag>` and wrap the
 //!   seed for the successor announced inside that release.
 //! - generation >= 2 `v2.x+` (successor): announce an ephemeral ECIES key on
 //!   the console and wait for the wrap; re-seal the seed under this image's
@@ -63,7 +63,7 @@ fn is_successor() -> bool {
 }
 
 /// Fetch or create the custody state, then — as custodian — listen for a
-/// handoff trigger on the console. Non-fatal: a timeout simply leaves this
+/// migration trigger on the console. Non-fatal: a timeout simply leaves this
 /// image as the standing custodian.
 pub fn boot(challenge: [u8; 32]) -> Result<()> {
     let source = verify::GitHubRelease::default();
@@ -79,21 +79,21 @@ pub fn boot(challenge: [u8; 32]) -> Result<()> {
             } else {
                 let seed = genesis_state(&mut firmware, &chip_key)?;
                 release_self_check();
-                println!("M0_TEST_COMPLETE: genesis done; handoff armed");
-                handoff_listen(&seed, &source)?;
+                println!("M0_TEST_COMPLETE: genesis done; migration armed");
+                migration_listen(&seed, &source)?;
             }
         }
         Some(blob) => {
             let sealed_for = state::blob_measurement(&blob)?;
             if sealed_for == measurement {
-                // This generation holds custody: recover, then offer handoff.
+                // This generation holds custody: recover, then offer migration.
                 let seed = state::open(&chip_key, &blob)?;
                 recover_state(&mut firmware, &blob, &seed, challenge)?;
-                println!("M0_TEST_COMPLETE: custody recovered; handoff armed");
+                println!("M0_TEST_COMPLETE: custody recovered; migration armed");
                 // The custody holder is the custodian, whatever its
                 // generation: a successor that has taken custody arms for
-                // the next handoff.
-                handoff_listen(&seed, &source)?;
+                // the next migration.
+                migration_listen(&seed, &source)?;
             } else if is_successor() {
                 // The current state is sealed for a different generation:
                 // announce and take custody.
@@ -101,7 +101,7 @@ pub fn boot(challenge: [u8; 32]) -> Result<()> {
             } else {
                 println!(
                     "m0_stand_down=ok; custody is held by a newer generation; \
-                     this image remains bootable for recovery and handoff"
+                     this image remains bootable for recovery and migration"
                 );
             }
         }
@@ -153,35 +153,35 @@ fn recover_state(
 }
 
 /// Custodian side of the seam: ARMED after genesis or recovery. Blocks on the
-/// console waiting for `HANDOFF <m1-tag>`; the tag only names the successor —
+/// console waiting for `MIGRATION <next-generation tag>`; the tag only names the successor —
 /// the announcement is fetched from that release (GitHub, digest-verified).
 /// Garbage on the console is ignored: the fail-safe is "no handoff, remain
 /// custodian", and the trigger can be re-sent at any time.
-fn handoff_listen(seed: &[u8; 32], source: &verify::GitHubRelease) -> Result<()> {
-    println!("m0_handoff_armed=ok; console trigger: HANDOFF <next-generation tag>");
+fn migration_listen(seed: &[u8; 32], source: &verify::GitHubRelease) -> Result<()> {
+    println!("m0_migration_armed=ok; console trigger: MIGRATION <next-generation tag>");
     let stdin = std::io::stdin();
     for line in stdin.lock().lines() {
         let Ok(line) = line else { return Ok(()) };
-        let Some(tag) = line.strip_prefix("HANDOFF ") else {
+        let Some(tag) = line.strip_prefix("MIGRATION ") else {
             continue;
         };
         let Some(next) = verify::parse_generation(tag) else {
-            println!("m0_handoff_ignored=ok; tag must be vX.Y.Z");
+            println!("m0_migration_ignored=ok; tag must be vX.Y.Z");
             continue;
         };
         if generation().is_none_or(|generation| next != generation + 1) {
-            println!("m0_handoff_ignored=ok; tag must be the next generation");
+            println!("m0_migration_ignored=ok; tag must be the next generation");
             continue;
         }
-        match self_handoff(seed, source, tag) {
+        match self_migration(seed, source, tag) {
             Ok(()) => {
                 println!(
-                    "m0_handoff_complete=ok; seed wrapped for the successor announced in {tag}"
+                    "m0_migration_complete=ok; seed wrapped for the successor announced in {tag}"
                 );
                 return Ok(());
             }
             Err(error) => {
-                println!("m0_handoff_error={error}; remaining standing custodian");
+                println!("m0_migration_error={error}; remaining standing custodian");
             }
         }
     }
@@ -190,7 +190,7 @@ fn handoff_listen(seed: &[u8; 32], source: &verify::GitHubRelease) -> Result<()>
 
 /// Verify the successor announcement published inside `tag`'s release and
 /// print the ECIES-wrapped seed.
-fn self_handoff(seed: &[u8; 32], source: &verify::GitHubRelease, tag: &str) -> Result<()> {
+fn self_migration(seed: &[u8; 32], source: &verify::GitHubRelease, tag: &str) -> Result<()> {
     let release = verify::fetch_release(source, tag)?
         .ok_or_else(|| anyhow::anyhow!("successor release not found"))?;
     let assets = release["assets"]
@@ -258,7 +258,7 @@ fn successor_boot(firmware: &mut Firmware, chip_key: &[u8; 32]) -> Result<()> {
     println!("pubkey={}", hex::encode(pubkey.as_bytes()));
     println!("report={}", hex::encode(&report));
     println!("ANNOUNCE_END");
-    println!("m1_announced=ok; waiting for the handoff wrap on the console");
+    println!("m1_announced=ok; waiting for the migration wrap on the console");
 
     let stdin = std::io::stdin();
     let mut reader = stdin.lock();

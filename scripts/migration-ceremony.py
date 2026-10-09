@@ -264,7 +264,7 @@ def phase_recover():
     print("[recover:2] booting M0 (recovery path: custody-v1 -> armed listener)")
     boot(NAME_M0, NAME_M0, ASSETS_M0, RUNTIME / "m0.console", RUNTIME / "m0.log")
     console = Console(RUNTIME / "m0.console")
-    text = console.wait_for("m0_handoff_armed=ok")
+    text = console.wait_for("m0_migration_armed=ok")
     require("state_recovered=ok" in text, "custody state not recovered")
     seed = last_value(text, "dummy_seed_sha256=")
     console.close()
@@ -306,13 +306,13 @@ def phase_migration():
             f"upload announcement.txt to {TAG_M1} first")
     console_m0 = Console(RUNTIME / "m0.console")
     console_m0.send("\n")
-    console_m0.send(f"HANDOFF {TAG_M1}\n")
+    console_m0.send(f"MIGRATION {TAG_M1}\n")
     try:
         wrap = console_m0.read_block("WRAP_BEGIN", "WRAP_END", 120)
     except RuntimeError:
         print("no wrap after 120s; one clean re-trigger")
         console_m0.send("\n")
-        console_m0.send(f"HANDOFF {TAG_M1}\n")
+        console_m0.send(f"MIGRATION {TAG_M1}\n")
         wrap = console_m0.read_block("WRAP_BEGIN", "WRAP_END", 120)
     for line in wrap.splitlines():
         for field in ("ephemeral_pubkey=", "blob="):
