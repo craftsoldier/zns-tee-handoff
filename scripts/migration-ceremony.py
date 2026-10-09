@@ -357,7 +357,8 @@ def phase_verify_m1():
     boot(NAME_M1, "m1-verify", ASSETS_M1,
          RUNTIME / "m1-verify.console", RUNTIME / "m1-verify.log")
     console = Console(RUNTIME / "m1-verify.console")
-    text = console.wait_for("state_recovered=ok")
+    console.wait_for("state_recovered=ok")
+    text = console.wait_for("release_self_check=")
     require("release_self_check=accept" in text, "self-check not accepted")
     actual = last_value(text, "dummy_seed_sha256=")
     console.close()
