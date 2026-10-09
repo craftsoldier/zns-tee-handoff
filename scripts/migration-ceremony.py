@@ -325,7 +325,10 @@ def phase_migration():
     console_m1.wait_for("m1_custody_taken=ok", 30)
     seed = last_value(console_m1.text, "dummy_seed_sha256=")
     console_m1.close()
-    (RUNTIME / "state").write_text(state_block + "\n")
+    hex_lines = state_block.splitlines()[1:-1]
+    blob = bytes.fromhex("".join(hex_lines))
+    require(blob[:8] == b"LNST0001", "bad state magic")
+    (RUNTIME / "state").write_bytes(blob)
     print(f"M1 re-sealed the seed: {seed}")
     print("RELAY NOW (authenticated machine):")
     print(f"  scp {RUNTIME}/state .")
