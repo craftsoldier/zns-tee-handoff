@@ -299,7 +299,7 @@ if __name__ == "__main__":
         require(os.geteuid() == 0, "run as root on the isolated SNP test host")
         RUNTIME.mkdir(parents=True, exist_ok=True)
         {"verify": phase_verify, "genesis": phase_genesis, "announce": phase_announce,
-         "handoff": phase_handoff, "verify-m1": phase_verify_m1}[PHASE]()
+         "migration": phase_handoff, "verify-m1": phase_verify_m1}[PHASE]()
     except Exception as error:
         import traceback
         print(f"MIGRATION {PHASE.upper()} FAILED: {error}")
