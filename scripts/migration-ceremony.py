@@ -205,7 +205,7 @@ def phase_genesis():
     print("RELAY NOW (authenticated machine):")
     print(f"  scp {RUNTIME}/state .")
     print(f"  gh release create custody-v1 --repo {REPO} --prerelease "
-          f"--title 'custody state v1' --notes 'seed {fingerprint(content)}' state")
+          f"--title 'custody state v1' --notes 'seed {fingerprint(log)}' state")
     print(f"then run: migration-ceremony.py announce {TAG_M0} {TAG_M1}")
 
 
