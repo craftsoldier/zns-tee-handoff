@@ -87,7 +87,9 @@ def main():
     args = parser.parse_args()
     release_tag = args.release_tag.strip()
     if release_tag and (
-        not release_tag.startswith("m0-v") or "/" in release_tag or any(c.isspace() for c in release_tag)
+        not release_tag.startswith(("m0-v", "m1-v"))
+        or "/" in release_tag
+        or any(c.isspace() for c in release_tag)
     ):
         raise RuntimeError("invalid release tag")
     commit = run("git", "rev-parse", "HEAD", cwd=ROOT)
