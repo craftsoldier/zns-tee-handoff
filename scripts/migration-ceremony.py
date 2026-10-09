@@ -170,26 +170,36 @@ def phase_verify():
 
 
 def phase_genesis():
+    print("[genesis:1] checking lineage is clean (custody-v1 must not exist)")
     try:
         fetch_release("custody-v1")
         raise RuntimeError("custody-v1 already exists; delete it to start a fresh lineage")
     except urllib.error.HTTPError as error:
         require(error.code == 404, f"unexpected api status {error.code}")
+    print("[genesis:2] fetching image assets")
     release = fetch_release(TAG_M0)
     download_asset(release, "m0-initrd.img", ASSETS_M0)
     download_asset(release, "vmlinuz", ASSETS_M0)
     download_asset(release, "OVMF.amdsev.fd", ASSETS_M0)
     challenge = secrets.token_hex(32)
     log = RUNTIME / "m0.log"
+    print("[genesis:3] booting M0 (disk-less, console socket + logfile)")
     boot(NAME_M0, ASSETS_M0, RUNTIME / "m0.console", log)
     content = wait_for(log, "m0_state_created=ok")
+    print("[genesis:4] genesis marker found in log")
     require("release_self_check=accept" in content, "self-check not accepted")
     require("GENESIS_STATE_BLOB_END" in content, "no genesis blob")
+    print("[genesis:5] extracting state blob between markers")
     lines = content.splitlines()
-    blob = bytes.fromhex("".join(
-        lines[lines.index("GENESIS_STATE_BLOB_BEGIN") + 1:
-               lines.index("GENESIS_STATE_BLOB_END")]))
+    begin = lines.index("GENESIS_STATE_BLOB_BEGIN")
+    end = lines.index("GENESIS_STATE_BLOB_END")
+    hex_lines = lines[begin + 1:end]
+    print(f"[genesis:6] blob block: {len(hex_lines)} line(s), "
+          f"total {sum(len(l) for l in hex_lines)} hex chars")
+    blob = bytes.fromhex("".join(hex_lines))
+    print(f"[genesis:7] blob {len(blob)} bytes, magic {blob[:8]!r}")
     require(blob[:8] == b"LNST0001", "bad state magic")
+    print("[genesis:8] writing state file for relay")
     (RUNTIME / "state").write_bytes(blob)
     print(f"genesis ok: seed {fingerprint(log)}; M0 stays RUNNING (handoff armed)")
     print("RELAY NOW (authenticated machine):")
@@ -291,5 +301,7 @@ if __name__ == "__main__":
         {"verify": phase_verify, "genesis": phase_genesis, "announce": phase_announce,
          "handoff": phase_handoff, "verify-m1": phase_verify_m1}[PHASE]()
     except Exception as error:
+        import traceback
         print(f"MIGRATION {PHASE.upper()} FAILED: {error}")
+        traceback.print_exc()
         sys.exit(1)
