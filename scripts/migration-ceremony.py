@@ -219,49 +219,50 @@ def main():
     if PHASE == "handoff":
         console_m0 = RUNTIME / "m0.console"
         console_m1 = RUNTIME / "m1.console"
-        relay_block(console_m1, console_m0, "ANNOUNCE_BEGIN", "ANNOUNCE_END")
-        print("announcement relayed to M0; waiting for the wrap")
-        with socket.socket(socket.AF_UNIX) as src:
-            src.settimeout(5)
-            src.connect(str(console_m0))
-            stream = src.makefile("rwb")
-            wrap, inside = [], False
-            deadline = time.time() + 120
-            while time.time() < deadline:
-                line = stream.readline()
-                if not line:
-                    time.sleep(0.5)
-                    continue
-                text = line.decode(errors="replace").rstrip("\n")
-                if text == "WRAP_BEGIN":
-                    inside = True
-                    wrap = [text]
-                    continue
-                if inside:
-                    wrap.append(text)
-                    if text == "WRAP_END":
-                        break
-            require(inside, "did not capture WRAP block from M0")
-        payload = ("\n".join(wrap) + "\n").encode()
+        announcement = (RUNTIME / "announcement.txt").read_text()
+        require(announcement.startswith("ANNOUNCE_BEGIN"), "saved announcement invalid")
+
+        # Trigger M0 and feed it the announcement from the m1 release.
+        with socket.socket(socket.AF_UNIX) as dst:
+            dst.settimeout(5)
+            dst.connect(str(console_m0))
+            dst.sendall(f"HANDOFF {TAG_M1}\n".encode())
+            dst.sendall(announcement.encode())
+        print("HANDOFF + announcement fed to M0; waiting for the wrap")
+
+        def capture(log, begin, end, timeout=180):
+            log = Path(log)
+            for _ in range(timeout):
+                content = log.read_text(errors="replace") if log.exists() else ""
+                if begin in content and end in content:
+                    lines = content.splitlines()
+                    return "\n".join(lines[lines.index(begin):lines.index(end) + 1])
+                time.sleep(2)
+            raise RuntimeError(f"timeout waiting for {begin}")
+
+        wrap = capture(RUNTIME / f"m0-{TAG_M0}.log", "WRAP_BEGIN", "WRAP_END")
+        print("wrap captured from M0; relaying to M1")
         with socket.socket(socket.AF_UNIX) as dst:
             dst.settimeout(5)
             dst.connect(str(console_m1))
-            dst.sendall(payload)
+            dst.sendall((wrap + "\n").encode())
         print("wrap relayed to M1; waiting for the new custody state")
-        log1 = RUNTIME / f"m1-{TAG_M1}.log"
-        wait_for(log1, ["CUSTODY_STATE_BLOB_END", "M0_TEST_FAILED"])
-        content = log1.read_text(errors="replace")
-        require("m1_custody_taken=ok" in content, "M1 did not take custody")
-        lines = content.splitlines()
-        blob = "\n".join(lines[
-            lines.index("CUSTODY_STATE_BLOB_BEGIN"):
-            lines.index("CUSTODY_STATE_BLOB_END") + 1])
-        (RUNTIME / "state").write_text(blob + "\n")
-        print("M1 re-sealed the seed; capture complete")
+        state_block = capture(RUNTIME / f"m1-{TAG_M1}.log",
+                              "CUSTODY_STATE_BLOB_BEGIN", "CUSTODY_STATE_BLOB_END")
+        (RUNTIME / "state").write_text(state_block + "\n")
+        lines = state_block.splitlines()
+        blob_hex = "".join(lines[1:-1])
+        blob = bytes.fromhex(blob_hex)
+        expected = blob[8:40].hex()
+        print(f"M1 re-sealed the seed; new fingerprint {expected}; capture complete")
         print("RELAY NOW (authenticated machine):")
         print(f"  scp {RUNTIME}/state .")
         print(f"  gh release create custody-v2 --repo {REPO} --prerelease "
-              f"--title 'custody state v2' --notes 'sealed by {TAG_M1}' state")
+              f"--title 'custody state v2' --notes 'sealed by {TAG_M1}; "
+              f"seed {expected}' state")
+        qmp_stop(RUNTIME / f"m0-{TAG_M0}.qmp", f"m0-{TAG_M0}",
+                 RUNTIME / f"m0-{TAG_M0}.pid")
+        print("M0 stopped; its release remains bootable forever")
         return
 
     if PHASE == "verify-m1":
