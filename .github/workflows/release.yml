@@ -27,6 +27,16 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ github.sha }}
+      - name: Require minor-only release tags
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          if [[ ! "$GITHUB_REF_NAME" =~ ^m0-v[0-9]+\.[0-9]+\.0$ ]]; then
+            echo "release tags must be m0-vX.Y.0: every image bakes new policy strings,"
+            echo "changes the measurement, and forms a new custody generation."
+            echo "Patch-level releases would falsely claim custody continuity." >&2
+            exit 1
+          fi
       - name: Validate source and read compiler pin
         id: source
         env:
