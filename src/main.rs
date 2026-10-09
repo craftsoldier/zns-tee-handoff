@@ -14,6 +14,7 @@ fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [arg] if arg == "demo" => demo(),
+        [role, command] if role == "m0" && command == "boot" => boot([0; 32]),
         [role, command, challenge] if role == "m0" && command == "boot" => {
             let bytes = hex::decode(challenge)?;
             let challenge: [u8; 32] = bytes
@@ -23,11 +24,12 @@ fn run() -> Result<()> {
         }
         [arg] if arg == "--help" || arg == "-h" => {
             println!(
-                "Usage:\n  zns-tee-handoff demo\n  zns-tee-handoff m0 boot CHALLENGE_HEX\n\n\
-                 CHALLENGE_HEX is 32 bytes (64 hex characters) supplied by the launcher\n\
-                 for report freshness. The lineage state is fetched from — or, on a\n\
-                 fresh lineage, printed for relay to — the baked lineage release.\n\
-                 Requires a Linux SNP guest with network."
+                "Usage:\n  zns-tee-handoff demo\n  zns-tee-handoff m0 boot [CHALLENGE_HEX]\n\n\
+                 CHALLENGE_HEX (optional, 64 hex characters) supplies report freshness.\n\
+                 It must never be part of the measured launch inputs. The lineage\n\
+                 state is fetched from — or, on a fresh lineage, printed for relay\n\
+                 to — the baked lineage release. Requires a Linux SNP guest with\n\
+                 network."
             );
             Ok(())
         }

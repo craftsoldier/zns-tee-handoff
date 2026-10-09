@@ -104,7 +104,7 @@ def stop_vm(qmp_path, pidfile):
     raise RuntimeError("test VM did not exit")
 
 
-def boot(number, challenge):
+def boot(number):
     log = RUNTIME / f"boot-{number}.log"
     qmp_path = RUNTIME / f"boot-{number}.qmp"
     pidfile = RUNTIME / f"boot-{number}.pid"
@@ -114,7 +114,7 @@ def boot(number, challenge):
         "sev-snp-guest,id=sev0,cbitpos=51,reduced-phys-bits=1,kernel-hashes=on,policy=0x30000",
         "-bios", str(ASSETS / "OVMF.amdsev.fd"), "-kernel", str(ASSETS / "vmlinuz"),
         "-initrd", str(ASSETS / "m0-initrd.img"),
-        "-append", f"console=ttyS0 rdinit=/init panic=-1 challenge={challenge}",
+        "-append", "console=ttyS0 rdinit=/init panic=-1",
         "-nic", "user,model=virtio-net-pci",
         "-display", "none", "-serial", f"file:{log}", "-monitor", "none",
         "-qmp", f"unix:{qmp_path},server=on,wait=off",
@@ -151,8 +151,7 @@ def main():
             raise RuntimeError(f"{LINEAGE} already exists; a lineage is created once")
         except urllib.error.HTTPError as error:
             require(error.code == 404, f"unexpected api status {error.code}")
-        challenge = secrets.token_hex(32)
-        log = boot(1, challenge)
+        log = boot(1)
         require("M0_TEST_COMPLETE:" in log, "genesis boot failed")
         require("m0_state_created=ok" in log, "genesis did not create state")
         require("release_self_check=accept" in log, "self-check not accepted")
@@ -183,8 +182,7 @@ def main():
         require(hashlib.sha256(blob).hexdigest() == digest[7:],
                 "lineage state digest mismatch")
         expected = blob[8:40].hex()
-        challenge = secrets.token_hex(32)
-        log = boot(2, challenge)
+        log = boot(2)
         require("M0_TEST_COMPLETE:" in log, "recovery boot failed")
         require("m0_state_created=ok" not in log, "recovery boot created new state")
         require("release_self_check=accept" in log, "self-check not accepted")

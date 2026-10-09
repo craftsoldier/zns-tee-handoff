@@ -23,8 +23,9 @@ if $BB ip link set eth0 up 2>/dev/null; then
 	$BB ip addr add 10.0.2.15/24 dev eth0 2>/dev/null || true
 	$BB ip route add default via 10.0.2.2 dev eth0 2>/dev/null || true
 fi
-CHALLENGE=$($BB cat /proc/cmdline | $BB sed -n 's/.*challenge=\([0-9a-f]*\).*/\1/p')
-[ -n "$CHALLENGE" ] || halt_test missing_challenge
-/usr/local/bin/zns-tee-handoff m0 boot "$CHALLENGE" || halt_test boot
+# No challenge: the kernel command line is part of the measured launch, so
+# per-boot freshness material must never travel there. Zero challenge until a
+# post-launch freshness channel exists.
+/usr/local/bin/zns-tee-handoff m0 boot || halt_test boot
 echo "M0_TEST_COMPLETE: lineage state handled with self-check"
 while :; do "$BB" sleep 3600; done
