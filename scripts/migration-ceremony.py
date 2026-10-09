@@ -240,11 +240,29 @@ def phase_handoff():
             f"upload announcement.txt to {TAG_M1} first")
     console_m0 = RUNTIME / "m0.console"
     require(console_m0.exists(), "M0 console socket missing; run genesis phase")
+    # Paced delivery: the emulated UART drops bytes from bursts, so send the
+    # line in small chunks and prefix a newline on each retry to flush any
+    # partial line left in the guest's tty buffer. A garbled line is ignored
+    # by M0 (fail-safe); retries are harmless.
+    line = f"HANDOFF {TAG_M1}"
     with socket.socket(socket.AF_UNIX) as s:
         s.settimeout(5)
         s.connect(str(console_m0))
-        s.sendall(f"HANDOFF {TAG_M1}\n".encode())
-    print("HANDOFF trigger sent to M0; waiting for the wrap")
+        for attempt in range(4):
+            s.sendall(b"\n")
+            time.sleep(0.5)
+            for i in range(0, len(line), 6):
+                s.sendall(line[i:i + 6].encode())
+                time.sleep(0.05)
+            s.sendall(b"\n")
+            time.sleep(5)
+            content = (RUNTIME / "m0.log").read_text(errors="replace") \
+                if (RUNTIME / "m0.log").exists() else ""
+            if "WRAP_BEGIN" in content or "m0_handoff_error" in content \
+                    or "m0_handoff_ignored" in content:
+                break
+            print(f"trigger attempt {attempt + 1}: no reaction, re-sending")
+    print("HANDOFF trigger delivered; waiting for the wrap")
     wrap = poll_block(RUNTIME / "m0.log", "WRAP_BEGIN", "WRAP_END", 180)
     print("wrap captured from M0; relaying to M1")
     with socket.socket(socket.AF_UNIX) as s:
