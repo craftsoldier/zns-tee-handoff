@@ -26,10 +26,9 @@ fn run() -> Result<()> {
             println!(
                 "Usage:\n  zns-tee-handoff demo\n  zns-tee-handoff m0 boot [CHALLENGE_HEX]\n\n\
                  CHALLENGE_HEX (optional, 64 hex characters) supplies report freshness.\n\
-                 It must never be part of the measured launch inputs. The lineage\n\
-                 state is fetched from — or, on a fresh lineage, printed for relay\n\
-                 to — the baked lineage release. Requires a Linux SNP guest with\n\
-                 network."
+                 It must never be part of the measured launch inputs. The custody\n\
+                 state is fetched from — or, on first boot, printed for relay to —\n\
+                 its custody release. Requires a Linux SNP guest with network."
             );
             Ok(())
         }

@@ -115,7 +115,6 @@ def main():
     env["CARGO_INCREMENTAL"] = "0"
     env["SOURCE_DATE_EPOCH"] = "0"
     env["RELEASE_TAG"] = release_tag
-    env["LINEAGE"] = "lineage-main"
     env["RUSTFLAGS"] = f"--remap-path-prefix={ROOT}=/src --remap-path-prefix={work}=/build"
     # Prevent panic/source strings from depending on cargo registry location.
     cargo_home = Path(env.get("CARGO_HOME", str(Path.home() / ".cargo"))).resolve()

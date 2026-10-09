@@ -2,12 +2,12 @@
 """M0 stateless boot test. Run as root on the isolated SNP test host.
 
 Usage:
-  reboot-test.py genesis TAG   lineage release must NOT exist yet; boots a
+  reboot-test.py genesis TAG   custody release must NOT exist yet; boots a
                                disk-less guest, expects genesis, saves the
                                state blob, prints the relay commands.
-  reboot-test.py recovery TAG  lineage release must exist; boots a fresh
+  reboot-test.py recovery TAG  custody release must exist; boots a fresh
                                disk-less guest, expects recovery-only with
-                               the lineage fingerprint and self-check accept.
+                               the seed fingerprint and self-check accept.
 
 Both boots verify all release asset digests against the GitHub API first, and
 stop their VM only through its own QMP socket after the reported name matches
@@ -32,7 +32,7 @@ assert TAG.startswith("m0-v"), "tag must look like m0-vX.Y.Z"
 
 REPO = "craftsoldier/zns-tee-handoff"
 API = f"https://api.github.com/repos/{REPO}/releases/tags"
-LINEAGE = "lineage-main"
+CUSTODY_STATE = "custody-v1"
 ROOT = Path("/home/ubuntu/dh_tests") / TAG
 ASSETS, RUNTIME = ROOT / "assets", ROOT / "runtime"
 NAME = f"dh-{TAG}"
@@ -147,8 +147,8 @@ def main():
 
     if PHASE == "genesis":
         try:
-            fetch_release(LINEAGE)
-            raise RuntimeError(f"{LINEAGE} already exists; a lineage is created once")
+            fetch_release(CUSTODY_STATE)
+            raise RuntimeError(f"{CUSTODY_STATE} already exists; a seed is created once")
         except urllib.error.HTTPError as error:
             require(error.code == 404, f"unexpected api status {error.code}")
         log = boot(1)
@@ -160,27 +160,27 @@ def main():
         end = lines.index("GENESIS_STATE_BLOB_END")
         blob = bytes.fromhex("".join(lines[begin + 1:end]))
         require(len(blob) == 168, "unexpected state blob length")
-        (RUNTIME / "state-v1").write_bytes(blob)
+        (RUNTIME / "state").write_bytes(blob)
         stop_vm(RUNTIME / "boot-1.qmp", RUNTIME / "boot-1.pid")
         print(f"genesis ok: seed {fingerprint(log)}")
         print("RELAY NOW (authenticated machine):")
-        print(f"  cp {RUNTIME}/state-v1 .")
-        print(f"  gh release create {LINEAGE} --prerelease --title 'lineage main' "
-              f"--notes 'state v1; seed {fingerprint(log)}' state-v1")
+        print(f"  scp {ROOT}/runtime/state . && gh release create {CUSTODY_STATE} "
+              f"--repo {REPO} --prerelease --title 'custody state v1' "
+              f"--notes 'seed {fingerprint(log)}' state")
     else:
-        lineage = fetch_release(LINEAGE)
-        assets = {a["name"]: a for a in lineage["assets"]}
-        require("state-v1" in assets, "lineage release has no state-v1")
-        request = urllib.request.Request(assets["state-v1"]["url"], headers={
+        custody = fetch_release(CUSTODY_STATE)
+        assets = {a["name"]: a for a in custody["assets"]}
+        require("state" in assets, "custody release has no state asset")
+        request = urllib.request.Request(assets["state"]["url"], headers={
             "User-Agent": "zns-custody-reboot-test",
             "Accept": "application/octet-stream",
         })
         with urllib.request.urlopen(request, timeout=120) as response:
             blob = response.read()
-        digest = assets["state-v1"]["digest"]
-        require(digest.startswith("sha256:"), "lineage asset digest missing")
+        digest = assets["state"]["digest"]
+        require(digest.startswith("sha256:"), "custody asset digest missing")
         require(hashlib.sha256(blob).hexdigest() == digest[7:],
-                "lineage state digest mismatch")
+                "custody state digest mismatch")
         expected = blob[8:40].hex()
         log = boot(2)
         require("M0_TEST_COMPLETE:" in log, "recovery boot failed")
@@ -188,7 +188,7 @@ def main():
         require("release_self_check=accept" in log, "self-check not accepted")
         require(fingerprint(log) == expected, "seed changed across boots")
         stop_vm(RUNTIME / "boot-2.qmp", RUNTIME / "boot-2.pid")
-        print(f"recovery ok: lineage seed {expected} recovered, self-check accepted")
+        print(f"recovery ok: custody seed {expected} recovered, self-check accepted")
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ use std::{fmt, io::Read, time::Duration};
 
 const API_BASE: &str = "https://api.github.com";
 const REPO: &str = "craftsoldier/zns-tee-handoff";
-const TAG_PREFIX: &str = "m0-v";
+const TAG_PREFIXES: [&str; 2] = ["m0-v", "m1-v"];
 const MEASUREMENT_ASSET: &str = "snp-measurement.txt";
 const ASSET_HOSTS: [&str; 3] = [
     "api.github.com",
@@ -98,6 +98,18 @@ pub fn fetch_release(source: &dyn ReleaseSource, tag: &str) -> Result<Option<Val
         Err(FetchError::HttpStatus(code)) => Err(anyhow!("api status {code}")),
         Err(FetchError::Transport(e)) => Err(anyhow!("api unreachable: {e}")),
     }
+}
+
+/// Fetch the repository's release listing.
+pub fn fetch_release_list(source: &dyn ReleaseSource) -> Result<Vec<Value>> {
+    let url = format!("{API_BASE}/repos/{REPO}/releases");
+    let fetched = source
+        .get(&url, "application/vnd.github+json")
+        .map_err(|e| match e {
+            FetchError::HttpStatus(code) => anyhow!("api status {code}"),
+            FetchError::Transport(t) => anyhow!("api unreachable: {t}"),
+        })?;
+    serde_json::from_slice(&fetched.body).map_err(|_| anyhow!("malformed release listing"))
 }
 
 /// Download one asset from a release listing, enforcing the host allowlist and
@@ -204,8 +216,8 @@ pub fn self_check(
             }
         },
     };
-    if !tag.starts_with(TAG_PREFIX) {
-        return reject("tag does not match the policy prefix");
+    if !TAG_PREFIXES.iter().any(|prefix| tag.starts_with(prefix)) {
+        return reject("tag does not match the policy prefixes");
     }
     let release_url = format!("{API_BASE}/repos/{REPO}/releases/tags/{tag}");
     let fetched = match source.get(&release_url, "application/vnd.github+json") {
