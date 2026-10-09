@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
-"""MIGRATION m1-v0.2.0 — M0→M1 custody handoff ceremony.
+"""M0 -> M1 custody migration ceremony.
 
 Run as root on the isolated SNP test host. The relay (this script, run by the
 untrusted host operator) only moves text between guest consoles and GitHub
 releases. Every security check happens inside the guests. VMs are stopped
 only via their own QMP sockets after a name check.
 
+Console I/O is socket-native and full-duplex. QEMU's chardev logfiles are
+documented best-effort (qemu_chr_write_log silently drops on transient write
+errors) and were observed dropping bytes; they are never a data channel. The
+emulated UART is flow-controlled (QEMU reads the socket only as fast as the
+guest drains its FIFO), so a single plain sendall() is paced by the guest.
+
 Usage, in order:
-  migration-ceremony.py verify              verify both image releases
+  migration-ceremony.py verify TAG_M0 TAG_M1
+                                            verify both image releases
   migration-ceremony.py genesis TAG_M0      boot M0: fresh seed -> custody-v1
+  migration-ceremony.py recover TAG_M0      boot M0: custody-v1 -> armed
   migration-ceremony.py announce TAG_M0 TAG_M1
                                             boot M1: announce (M1 stays running)
   migration-ceremony.py migration TAG_M0 TAG_M1
@@ -20,7 +28,7 @@ Usage, in order:
 import hashlib
 import json
 import os
-import secrets
+import re
 import socket
 import subprocess
 import sys
@@ -112,7 +120,7 @@ def qmp_stop(qmp_path, expected_name, pidfile):
     raise RuntimeError("VM did not exit")
 
 
-def boot(name, assets, console_socket, log):
+def boot(name, stem, assets, console_socket, log):
     run("nice", "-n", "10", "qemu-system-x86_64", "-name", name,
         "-enable-kvm", "-machine", "q35,confidential-guest-support=sev0,vmport=off",
         "-cpu", "host", "-smp", "2", "-m", "4G", "-object",
@@ -124,36 +132,74 @@ def boot(name, assets, console_socket, log):
         "-display", "none", "-monitor", "none",
         "-chardev", f"socket,id=ser0,path={console_socket},server=on,wait=off,logfile={log}",
         "-serial", "chardev:ser0",
-        "-qmp", f"unix:{RUNTIME / (name + '.qmp')},server=on,wait=off",
-        "-pidfile", str(RUNTIME / (name + ".pid")), "-daemonize", "-no-reboot")
+        "-qmp", f"unix:{RUNTIME / (stem + '.qmp')},server=on,wait=off",
+        "-pidfile", str(RUNTIME / (stem + ".pid")), "-daemonize", "-no-reboot")
 
 
-def wait_for(path, marker, timeout=180):
-    log = Path(path)
-    for _ in range(timeout // 2):
-        content = log.read_text(errors="replace") if log.exists() else ""
-        if marker in content:
-            return content
-        time.sleep(2)
-    raise RuntimeError(f"timeout waiting for {marker!r} in {log}")
+class Console:
+    """Full-duplex client for a QEMU socket chardev console.
+
+    Reads are the only trustworthy copy of guest output; the emulated UART
+    flow-controls writes (QEMU reads the socket only as fast as the guest
+    drains its FIFO), so plain sendall() needs no artificial pacing.
+    """
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self.sock = socket.socket(socket.AF_UNIX)
+        self.sock.settimeout(2)
+        deadline = time.time() + 15
+        while True:
+            try:
+                self.sock.connect(str(self.path))
+                break
+            except (FileNotFoundError, ConnectionRefusedError):
+                if time.time() > deadline:
+                    raise
+                time.sleep(0.2)
+        self.text = ""
+
+    def _pump(self):
+        try:
+            data = self.sock.recv(65536)
+        except socket.timeout:
+            return
+        if not data:
+            raise RuntimeError(f"console {self.path} closed by peer")
+        self.text += data.decode("utf-8", "replace") \
+            .replace("\r\n", "\n").replace("\r", "\n")
+
+    def send(self, line):
+        self.sock.sendall(line.encode())
+
+    def wait_for(self, marker, timeout=180):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if marker in self.text:
+                return self.text
+            self._pump()
+        raise RuntimeError(f"timeout waiting for {marker!r} on {self.path}")
+
+    def read_block(self, begin, end, timeout=180):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            lines = self.text.splitlines()
+            if begin in lines and end in lines:
+                return "\n".join(lines[lines.index(begin):lines.index(end) + 1])
+            self._pump()
+        raise RuntimeError(f"timeout waiting for {begin!r}..{end!r} on {self.path}")
+
+    def close(self):
+        try:
+            self.sock.close()
+        except OSError:
+            pass
 
 
-def poll_block(path, begin, end, timeout):
-    """Poll a log file until a BEGIN/END block exists, then return it."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        content = Path(path).read_text(errors="replace") if Path(path).exists() else ""
-        lines = content.splitlines()
-        if begin in lines and end in lines:
-            return "\n".join(lines[lines.index(begin):lines.index(end) + 1])
-        time.sleep(2)
-    raise RuntimeError(f"timeout waiting for {begin!r} in {path}")
-
-
-def fingerprint(log):
-    values = [line.split("=", 1)[1] for line in Path(log).read_text(errors="replace").splitlines()
-              if line.startswith("dummy_seed_sha256=")]
-    require(values, f"no seed fingerprint in {log}")
+def last_value(text, prefix):
+    values = [line.split("=", 1)[1] for line in text.splitlines()
+              if line.startswith(prefix)]
+    require(values, f"no {prefix} line in console output")
     return values[-1]
 
 
@@ -181,31 +227,27 @@ def phase_genesis():
     download_asset(release, "m0-initrd.img", ASSETS_M0)
     download_asset(release, "vmlinuz", ASSETS_M0)
     download_asset(release, "OVMF.amdsev.fd", ASSETS_M0)
-    challenge = secrets.token_hex(32)
-    log = RUNTIME / "m0.log"
-    print("[genesis:3] booting M0 (disk-less, console socket + logfile)")
-    boot(NAME_M0, ASSETS_M0, RUNTIME / "m0.console", log)
-    content = wait_for(log, "m0_state_created=ok")
-    print("[genesis:4] genesis marker found in log")
-    require("release_self_check=accept" in content, "self-check not accepted")
-    require("GENESIS_STATE_BLOB_END" in content, "no genesis blob")
-    print("[genesis:5] extracting state blob between markers")
-    lines = content.splitlines()
-    begin = lines.index("GENESIS_STATE_BLOB_BEGIN")
-    end = lines.index("GENESIS_STATE_BLOB_END")
-    hex_lines = lines[begin + 1:end]
-    print(f"[genesis:6] blob block: {len(hex_lines)} line(s), "
+    print("[genesis:3] booting M0 (disk-less, console socket)")
+    boot(NAME_M0, NAME_M0, ASSETS_M0, RUNTIME / "m0.console", RUNTIME / "m0.log")
+    console = Console(RUNTIME / "m0.console")
+    text = console.wait_for("m0_state_created=ok")
+    print("[genesis:4] genesis marker on console stream")
+    require("release_self_check=accept" in text, "self-check not accepted")
+    block = console.read_block("GENESIS_STATE_BLOB_BEGIN", "GENESIS_STATE_BLOB_END", 10)
+    hex_lines = block.splitlines()[1:-1]
+    print(f"[genesis:5] blob block: {len(hex_lines)} line(s), "
           f"total {sum(len(l) for l in hex_lines)} hex chars")
     blob = bytes.fromhex("".join(hex_lines))
-    print(f"[genesis:7] blob {len(blob)} bytes, magic {blob[:8]!r}")
+    print(f"[genesis:6] blob {len(blob)} bytes, magic {blob[:8]!r}")
     require(blob[:8] == b"LNST0001", "bad state magic")
-    print("[genesis:8] writing state file for relay")
     (RUNTIME / "state").write_bytes(blob)
-    print(f"genesis ok: seed {fingerprint(log)}; M0 stays RUNNING (handoff armed)")
+    seed = last_value(text, "dummy_seed_sha256=")
+    console.close()
+    print(f"genesis ok: seed {seed}; M0 stays RUNNING (handoff armed)")
     print("RELAY NOW (authenticated machine):")
     print(f"  scp {RUNTIME}/state .")
     print(f"  gh release create custody-v1 --repo {REPO} --prerelease "
-          f"--title 'custody state v1' --notes 'seed {fingerprint(log)}' state")
+          f"--title 'custody state v1' --notes 'seed {seed}' state")
     print(f"then run: migration-ceremony.py announce {TAG_M0} {TAG_M1}")
 
 
@@ -215,14 +257,15 @@ def phase_recover():
     download_asset(release, "m0-initrd.img", ASSETS_M0)
     download_asset(release, "vmlinuz", ASSETS_M0)
     download_asset(release, "OVMF.amdsev.fd", ASSETS_M0)
-    log = RUNTIME / "m0.log"
     print("[recover:2] booting M0 (recovery path: custody-v1 -> armed listener)")
-    boot(NAME_M0, ASSETS_M0, RUNTIME / "m0.console", log)
-    content = wait_for(log, "m0_handoff_armed=ok")
-    print("[recover:3] armed marker found")
-    require("state_recovered=ok" in content, "custody state not recovered")
-    # 0.17.0 self-checks after the handoff completes, not before arming.
-    print(f"recover ok: M0 resurrected from custody-v1; seed {fingerprint(log)}; armed")
+    boot(NAME_M0, NAME_M0, ASSETS_M0, RUNTIME / "m0.console", RUNTIME / "m0.log")
+    console = Console(RUNTIME / "m0.console")
+    text = console.wait_for("m0_handoff_armed=ok")
+    require("state_recovered=ok" in text, "custody state not recovered")
+    seed = last_value(text, "dummy_seed_sha256=")
+    console.close()
+    print(f"recover ok: M0 resurrected from custody-v1; seed {seed}; armed")
+    print(f"next: migration-ceremony.py migration {TAG_M0} {TAG_M1}")
 
 
 def phase_announce():
@@ -232,14 +275,13 @@ def phase_announce():
     download_asset(release, "m0-initrd.img", ASSETS_M1)
     download_asset(release, "vmlinuz", ASSETS_M1)
     download_asset(release, "OVMF.amdsev.fd", ASSETS_M1)
-    log = RUNTIME / "m1.log"
-    boot(NAME_M1, ASSETS_M1, RUNTIME / "m1.console", log)
-    content = wait_for(log, "ANNOUNCE_END")
-    require("m1_announced=ok" in content, "M1 did not announce")
-    lines = content.splitlines()
-    announce = "\n".join(lines[lines.index("ANNOUNCE_BEGIN"):
-                              lines.index("ANNOUNCE_END") + 1])
+    boot(NAME_M1, NAME_M1, ASSETS_M1, RUNTIME / "m1.console", RUNTIME / "m1.log")
+    console = Console(RUNTIME / "m1.console")
+    text = console.wait_for("ANNOUNCE_END")
+    require("m1_announced=ok" in text, "M1 did not announce")
+    announce = console.read_block("ANNOUNCE_BEGIN", "ANNOUNCE_END", 10)
     (RUNTIME / "announcement.txt").write_text(announce + "\n")
+    console.close()
     print("M1 announced and stays RUNNING (it holds the wrap key)")
     print("RELAY NOW (authenticated machine):")
     print(f"  scp {RUNTIME}/announcement.txt .")
@@ -247,80 +289,53 @@ def phase_announce():
     print(f"then run: migration-ceremony.py migration {TAG_M0} {TAG_M1}")
 
 
-def phase_handoff():
+def valid_hex(value):
+    return len(value) % 2 == 0 and all(c in "0123456789abcdef" for c in value)
+
+
+def phase_migration():
     require(fetch_release("custody-v1").get("tag_name") == "custody-v1",
             "custody-v1 must exist")
     release = fetch_release(TAG_M1)
     assets = {a["name"]: a for a in release["assets"]}
     require("announcement.txt" in assets,
             f"upload announcement.txt to {TAG_M1} first")
-    console_m0 = RUNTIME / "m0.console"
-    require(console_m0.exists(), "M0 console socket missing; run genesis phase")
-    # Paced delivery: the emulated UART drops bytes from bursts, so send the
-    # line in small chunks and prefix a newline on each retry to flush any
-    # partial line left in the guest's tty buffer. A garbled line is ignored
-    # by M0 (fail-safe); retries are harmless.
-    line = f"HANDOFF {TAG_M1}"
-    with socket.socket(socket.AF_UNIX) as s:
-        s.settimeout(5)
-        s.connect(str(console_m0))
-        for attempt in range(4):
-            s.sendall(b"\n")
-            time.sleep(0.5)
-            for i in range(0, len(line), 6):
-                s.sendall(line[i:i + 6].encode())
-                time.sleep(0.05)
-            s.sendall(b"\n")
-            time.sleep(5)
-            content = (RUNTIME / "m0.log").read_text(errors="replace") \
-                if (RUNTIME / "m0.log").exists() else ""
-            if "WRAP_BEGIN" in content or "m0_handoff_error" in content \
-                    or "m0_handoff_ignored" in content:
-                break
-            print(f"trigger attempt {attempt + 1}: no reaction, re-sending")
-    print("HANDOFF trigger delivered; waiting for the wrap")
-    wrap = poll_block(RUNTIME / "m0.log", "WRAP_BEGIN", "WRAP_END", 180)
-    print("wrap captured from M0; relaying to M1")
-    # Paced delivery: the emulated UART overruns on bursts, so send the wrap
-    # in small chunks; a leading newline flushes any partial line M1's tty
-    # may hold. Retry until M1's custody blob appears in its log.
-    console_m1 = RUNTIME / "m1.console"
-    for attempt in range(4):
-        with socket.socket(socket.AF_UNIX) as s:
-            s.settimeout(5)
-            s.connect(str(console_m1))
-            s.sendall(b"\n")
-            time.sleep(0.5)
-            payload = wrap.encode()
-            for i in range(0, len(payload), 6):
-                s.sendall(payload[i:i + 6])
-                time.sleep(0.05)
-            s.sendall(b"\n")
-        try:
-            state_block = poll_block(RUNTIME / "m1.log",
-                                     "CUSTODY_STATE_BLOB_BEGIN",
-                                     "CUSTODY_STATE_BLOB_END", 60)
-            break
-        except RuntimeError:
-            if attempt == 3:
-                raise
-            print(f"attempt {attempt + 1}: no custody blob, re-sending the wrap")
-    print("wrap relayed to M1; custody state captured")
-    state_block = poll_block(RUNTIME / "m1.log",
-                             "CUSTODY_STATE_BLOB_BEGIN",
-                             "CUSTODY_STATE_BLOB_END", 180)
+    console_m0 = Console(RUNTIME / "m0.console")
+    console_m0.send("\n")
+    console_m0.send(f"HANDOFF {TAG_M1}\n")
+    try:
+        wrap = console_m0.read_block("WRAP_BEGIN", "WRAP_END", 120)
+    except RuntimeError:
+        print("no wrap after 120s; one clean re-trigger")
+        console_m0.send("\n")
+        console_m0.send(f"HANDOFF {TAG_M1}\n")
+        wrap = console_m0.read_block("WRAP_BEGIN", "WRAP_END", 120)
+    for line in wrap.splitlines():
+        for field in ("ephemeral_pubkey=", "blob="):
+            if line.startswith(field):
+                require(valid_hex(line[len(field):]),
+                        f"relay-side check: wrap {field} is not valid hex")
+    print("wrap captured from M0's console stream; relaying to M1")
+    console_m0.close()
+    console_m1 = Console(RUNTIME / "m1.console")
+    console_m1.send("\n")
+    console_m1.send(wrap + "\n")
+    state_block = console_m1.read_block("CUSTODY_STATE_BLOB_BEGIN",
+                                        "CUSTODY_STATE_BLOB_END", 180)
+    console_m1.wait_for("m1_custody_taken=ok", 30)
+    seed = last_value(console_m1.text, "dummy_seed_sha256=")
+    console_m1.close()
     (RUNTIME / "state").write_text(state_block + "\n")
-    import re
-    match = re.search(r"dummy_seed_sha256=([0-9a-f]{64})", state_block)
-    require(match is not None, "no fingerprint in custody state")
-    print(f"M1 re-sealed the seed: {match.group(1)}")
+    print(f"M1 re-sealed the seed: {seed}")
     print("RELAY NOW (authenticated machine):")
     print(f"  scp {RUNTIME}/state .")
     print(f"  gh release create custody-v2 --repo {REPO} --prerelease "
           f"--title 'custody state v2' --notes 'sealed by {TAG_M1}; "
-          f"seed {match.group(1)}' state")
-    qmp_stop(RUNTIME / "m0.qmp", NAME_M0, RUNTIME / "m0.pid")
+          f"seed {seed}' state")
+    qmp_stop(RUNTIME / f"{NAME_M0}.qmp", NAME_M0, RUNTIME / f"{NAME_M0}.pid")
     print("M0 stopped (name-checked); its release remains bootable forever")
+    qmp_stop(RUNTIME / f"{NAME_M1}.qmp", NAME_M1, RUNTIME / f"{NAME_M1}.pid")
+    print("M1 stopped (name-checked); custody now lives in the releases")
 
 
 def phase_verify_m1():
@@ -336,16 +351,16 @@ def phase_verify_m1():
     require(digest.startswith("sha256:"), "custody-v2 digest missing")
     require(hashlib.sha256(blob).hexdigest() == digest[7:], "digest mismatch")
     expected = blob[8:40].hex()
-    log = RUNTIME / "m1-verify.log"
-    boot(NAME_M1, ASSETS_M1, RUNTIME / "m1-verify.console", log)
-    content = wait_for(log, "state_recovered=ok")
-    require("release_self_check=accept" in content, "self-check not accepted")
-    values = [line.split("=", 1)[1] for line in content.splitlines()
-              if line.startswith("dummy_seed_sha256=")]
-    require(values and values[-1] == expected,
-            f"fingerprint mismatch: expected {expected}")
-    qmp_stop(RUNTIME / "m1.qmp", NAME_M1, RUNTIME / "m1.pid")
-    print(f"MIGRATION VERIFIED: seed {values[-1]} recovered by {TAG_M1}")
+    boot(NAME_M1, "m1-verify", ASSETS_M1,
+         RUNTIME / "m1-verify.console", RUNTIME / "m1-verify.log")
+    console = Console(RUNTIME / "m1-verify.console")
+    text = console.wait_for("state_recovered=ok")
+    require("release_self_check=accept" in text, "self-check not accepted")
+    actual = last_value(text, "dummy_seed_sha256=")
+    console.close()
+    qmp_stop(RUNTIME / "m1-verify.qmp", NAME_M1, RUNTIME / "m1-verify.pid")
+    require(actual == expected, f"fingerprint mismatch: expected {expected}")
+    print(f"MIGRATION VERIFIED: seed {actual} recovered by {TAG_M1}")
 
 
 if __name__ == "__main__":
@@ -353,7 +368,7 @@ if __name__ == "__main__":
         require(os.geteuid() == 0, "run as root on the isolated SNP test host")
         RUNTIME.mkdir(parents=True, exist_ok=True)
         {"verify": phase_verify, "genesis": phase_genesis, "recover": phase_recover, "announce": phase_announce,
-         "migration": phase_handoff, "verify-m1": phase_verify_m1}[PHASE]()
+         "migration": phase_migration, "verify-m1": phase_verify_m1}[PHASE]()
     except Exception as error:
         import traceback
         print(f"MIGRATION {PHASE.upper()} FAILED: {error}")
