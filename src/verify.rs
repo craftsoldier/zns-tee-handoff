@@ -100,7 +100,7 @@ pub fn fetch_release(source: &dyn ReleaseSource, tag: &str) -> Result<Option<Val
     }
 }
 
-/// Fetch the repository's release listing.
+/// Fetch the repository's release listing (newest first per GitHub).
 pub fn fetch_release_list(source: &dyn ReleaseSource) -> Result<Vec<Value>> {
     let url = format!("{API_BASE}/repos/{REPO}/releases");
     let fetched = source
