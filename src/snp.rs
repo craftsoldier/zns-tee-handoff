@@ -80,6 +80,7 @@ pub fn boot(challenge: [u8; 32]) -> Result<()> {
                 let seed = state::open(&chip_key, &blob)?;
                 recover_state(&mut firmware, &blob, &seed, challenge)?;
                 release_self_check();
+                println!("M0_TEST_COMPLETE: custody recovered; handoff listening on console");
                 handoff_listen(&seed, &source)?;
             }
         }
