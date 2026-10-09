@@ -19,11 +19,12 @@ use sev::{
     parser::ByteParser,
 };
 use sha2::{Digest, Sha256, Sha512};
-use std::io::BufRead;
+use std::{io::BufRead, thread, time::Duration};
 use zeroize::Zeroizing;
 use zns_tee_handoff::{hash, random_secret, state, verify};
 
 const POLICY: u64 = 0x30000;
+const HANDOFF_POLL: Duration = Duration::from_secs(120);
 
 pub fn live_measurement() -> Result<[u8; 48]> {
     let mut firmware = Firmware::open().context("open /dev/sev-guest")?;
@@ -224,67 +225,6 @@ fn handoff_poll(seed: &[u8; 32], source: &verify::GitHubRelease) -> Result<()> {
         println!("m0_handoff_complete=ok; seed wrapped for the successor announced in {tag}");
         return Ok(());
     }
-}
-
-/// Verify the successor announcement published inside `tag`'s release and
-/// print the ECIES-wrapped seed.
-fn self_handoff(seed: &[u8; 32], source: &verify::GitHubRelease, tag: &str) -> Result<()> {
-    let release = verify::fetch_release(source, tag)?
-        .ok_or_else(|| anyhow::anyhow!("successor release not found"))?;
-    let assets = release["assets"]
-        .as_array()
-        .ok_or_else(|| anyhow::anyhow!("successor release has no assets"))?;
-    let find = |name: &str| {
-        assets
-            .iter()
-            .find(|a| a["name"].as_str() == Some(name))
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("successor release missing {name}"))
-    };
-    let measurement_asset = find("snp-measurement.txt")?;
-    let announcement_asset = find("announcement.txt")?;
-    let measurement_bytes = verify::download_asset_checked(source, &measurement_asset)?;
-    let announcement_bytes = verify::download_asset_checked(source, &announcement_asset)?;
-
-    let measurement_text = std::str::from_utf8(&measurement_bytes)?.trim();
-    ensure!(
-        measurement_text.len() == 96,
-        "malformed successor measurement"
-    );
-    let mut measurement = [0u8; 48];
-    hex::decode_to_slice(measurement_text, &mut measurement)?;
-
-    let mut pubkey = None;
-    let mut report = None;
-    for line in String::from_utf8(announcement_bytes)?.lines() {
-        if let Some(value) = line.strip_prefix("pubkey=") {
-            pubkey = Some(hex::decode(value)?);
-        }
-        if let Some(value) = line.strip_prefix("report=") {
-            report = Some(hex::decode(value)?);
-        }
-    }
-    let pubkey = pubkey.ok_or_else(|| anyhow::anyhow!("announcement has no pubkey"))?;
-    let report = report.ok_or_else(|| anyhow::anyhow!("announcement has no report"))?;
-
-    let report = AttestationReport::from_bytes(&report)?;
-    ensure!(
-        report.measurement == measurement,
-        "announcement report does not match the successor release measurement"
-    );
-    ensure!(report.policy.0 == POLICY, "announcement policy mismatch");
-    ensure!(
-        report.report_data == state::announcement_report_data(&pubkey),
-        "announcement report does not bind the successor pubkey"
-    );
-
-    let fingerprint = hash(seed);
-    let wrap = state::wrap_seed(seed, &fingerprint, &pubkey)?;
-    println!("WRAP_BEGIN");
-    println!("ephemeral_pubkey={}", hex::encode(&wrap.ephemeral_pubkey));
-    println!("blob={}", hex::encode(&wrap.blob));
-    println!("WRAP_END");
-    Ok(())
 }
 
 /// Successor side of the seam: announce an ephemeral key, wait for the wrap,
