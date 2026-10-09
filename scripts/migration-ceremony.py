@@ -172,18 +172,22 @@ class Console:
     def send(self, line):
         self.sock.sendall(line.encode())
 
+    def _completed(self):
+        """Only completed lines: a recv chunk can split a line mid-marker."""
+        return self.text[:self.text.rfind("\n") + 1]
+
     def wait_for(self, marker, timeout=180):
         deadline = time.time() + timeout
         while time.time() < deadline:
-            if marker in self.text:
-                return self.text
+            if marker in self._completed():
+                return self._completed()
             self._pump()
         raise RuntimeError(f"timeout waiting for {marker!r} on {self.path}")
 
     def read_block(self, begin, end, timeout=180):
         deadline = time.time() + timeout
         while time.time() < deadline:
-            lines = self.text.splitlines()
+            lines = self._completed().splitlines()
             if begin in lines and end in lines:
                 return "\n".join(lines[lines.index(begin):lines.index(end) + 1])
             self._pump()
