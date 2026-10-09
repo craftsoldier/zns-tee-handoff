@@ -265,11 +265,31 @@ def phase_handoff():
     print("HANDOFF trigger delivered; waiting for the wrap")
     wrap = poll_block(RUNTIME / "m0.log", "WRAP_BEGIN", "WRAP_END", 180)
     print("wrap captured from M0; relaying to M1")
-    with socket.socket(socket.AF_UNIX) as s:
-        s.settimeout(5)
-        s.connect(str(RUNTIME / "m1.console"))
-        s.sendall((wrap + "\n").encode())
-    print("wrap relayed to M1; waiting for the new custody state")
+    # Paced delivery: the emulated UART overruns on bursts, so send the wrap
+    # in small chunks; a leading newline flushes any partial line M1's tty
+    # may hold. Retry until M1's custody blob appears in its log.
+    console_m1 = RUNTIME / "m1.console"
+    for attempt in range(4):
+        with socket.socket(socket.AF_UNIX) as s:
+            s.settimeout(5)
+            s.connect(str(console_m1))
+            s.sendall(b"\n")
+            time.sleep(0.5)
+            payload = wrap.encode()
+            for i in range(0, len(payload), 6):
+                s.sendall(payload[i:i + 6])
+                time.sleep(0.05)
+            s.sendall(b"\n")
+        try:
+            state_block = poll_block(RUNTIME / "m1.log",
+                                     "CUSTODY_STATE_BLOB_BEGIN",
+                                     "CUSTODY_STATE_BLOB_END", 60)
+            break
+        except RuntimeError:
+            if attempt == 3:
+                raise
+            print(f"attempt {attempt + 1}: no custody blob, re-sending the wrap")
+    print("wrap relayed to M1; custody state captured")
     state_block = poll_block(RUNTIME / "m1.log",
                              "CUSTODY_STATE_BLOB_BEGIN",
                              "CUSTODY_STATE_BLOB_END", 180)
