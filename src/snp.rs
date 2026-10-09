@@ -29,7 +29,7 @@ use zeroize::Zeroizing;
 use zns_tee_handoff::{hash, random_secret, state, verify};
 
 const POLICY: u64 = 0x30000;
-const HANDOFF_WAIT: Duration = Duration::from_secs(300);
+const HANDOFF_WAIT: Duration = Duration::from_secs(3600);
 
 pub fn live_measurement() -> Result<[u8; 48]> {
     let mut firmware = Firmware::open().context("open /dev/sev-guest")?;
@@ -67,24 +67,39 @@ pub fn boot(challenge: [u8; 32]) -> Result<()> {
     let mut firmware =
         Firmware::open().context("open /dev/sev-guest; run inside a dedicated SNP test guest")?;
     let chip_key = chip_key(&mut firmware)?;
-    if is_successor() {
-        successor_boot(&mut firmware, &chip_key)?;
-        release_self_check();
-    } else {
-        match state::fetch_custody_state(&source)? {
-            None => {
+    let measurement = live_measurement()?;
+    match state::fetch_custody_state(&source)? {
+        // Fresh lineage: the custodian creates the seed; a successor waits.
+        None => {
+            if is_successor() {
+                successor_boot(&mut firmware, &chip_key)?;
+            } else {
                 genesis_state(&mut firmware, &chip_key)?;
-                release_self_check();
             }
-            Some(blob) => {
+        }
+        Some(blob) => {
+            let sealed_for = state::blob_measurement(&blob)?;
+            if sealed_for == measurement {
+                // This generation holds custody: recover, then offer handoff.
                 let seed = state::open(&chip_key, &blob)?;
                 recover_state(&mut firmware, &blob, &seed, challenge)?;
-                release_self_check();
                 println!("M0_TEST_COMPLETE: custody recovered; handoff listening on console");
-                handoff_listen(&seed, &source)?;
+                if !is_successor() {
+                    handoff_listen(&seed, &source)?;
+                }
+            } else if is_successor() {
+                // The current state is sealed for a different generation:
+                // announce and take custody.
+                successor_boot(&mut firmware, &chip_key)?;
+            } else {
+                println!(
+                    "m0_stand_down=ok; custody is held by a newer generation; \
+                     this image remains bootable for recovery and handoff"
+                );
             }
         }
     }
+    release_self_check();
     Ok(())
 }
 
@@ -126,7 +141,7 @@ fn recover_state(
     println!("custody_state_sha256={}", hex::encode(hash(blob)));
     println!("recovery_challenge={}", hex::encode(challenge));
     println!("recovery_report_hex={}", hex::encode(&report));
-    println!("m0_state_recovered=ok; state fetched from the custody release");
+    println!("state_recovered=ok; state fetched from the custody release");
     Ok(())
 }
 

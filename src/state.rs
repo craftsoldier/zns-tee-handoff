@@ -72,6 +72,18 @@ pub fn open(chip_key: &[u8; 32], blob: &[u8]) -> Result<[u8; SEED_LEN]> {
     Ok(out)
 }
 
+/// Sealing measurement field of a state blob (bytes 40..88): which image
+/// generation the seed is currently sealed for.
+pub fn blob_measurement(blob: &[u8]) -> Result<[u8; 48]> {
+    ensure!(
+        blob.len() == BLOB_LEN && &blob[..8] == MAGIC,
+        "invalid state blob"
+    );
+    let mut measurement = [0u8; 48];
+    measurement.copy_from_slice(&blob[40..88]);
+    Ok(measurement)
+}
+
 /// Public fingerprint field of a state blob (bytes 8..40).
 pub fn fingerprint_of(blob: &[u8]) -> Result<[u8; 32]> {
     ensure!(
