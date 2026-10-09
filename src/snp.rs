@@ -79,7 +79,7 @@ pub fn boot(challenge: [u8; 32]) -> Result<()> {
                 recover_state(&mut firmware, &blob, &seed, challenge)?;
                 println!("M0_TEST_COMPLETE: custody recovered; polling for handoff");
                 if !is_successor() {
-                    handoff_listen(&seed, &source)?;
+                    handoff_poll(&seed, &source)?;
                 }
             } else if is_successor() {
                 // The current state is sealed for a different generation:
@@ -139,35 +139,91 @@ fn recover_state(
     Ok(())
 }
 
-/// Custodian side of the seam: ARMED after genesis or recovery. The console
-/// carries one 18-byte trigger line per handoff; the announcement itself is
-/// fetched from the successor's release (GitHub, digest-verified). Garbage on
-/// the console is ignored — the fail-safe is "no handoff, remain custodian".
-fn handoff_listen(seed: &[u8; 32], source: &verify::GitHubRelease) -> Result<()> {
-    println!("m0_handoff_armed=ok; console trigger: HANDOFF <m1-tag>");
-    let stdin = std::io::stdin();
-    for line in stdin.lock().lines() {
-        let Ok(line) = line else { return Ok(()) };
-        let Some(tag) = line.strip_prefix("HANDOFF ") else {
+/// Custodian side of the seam: poll the repository for a successor release
+/// carrying `announcement.txt`, verify it, and print the ECIES-wrapped seed.
+/// No console input: the announcement's authenticity comes from its release.
+/// Censorship or garbage leaves custody unchanged; M0 remains the standing
+/// custodian and polls forever.
+fn handoff_poll(seed: &[u8; 32], source: &verify::GitHubRelease) -> Result<()> {
+    println!("m0_handoff_polling=ok; checking for a successor announcement every 120s");
+    loop {
+        thread::sleep(HANDOFF_POLL);
+        let releases = verify::fetch_release_list(source)?;
+        let mut successor = None;
+        for release in &releases {
+            let Some(tag) = release["tag_name"].as_str() else {
+                continue;
+            };
+            if !tag.starts_with("m1-v") {
+                continue;
+            }
+            let Some(assets) = release["assets"].as_array() else {
+                continue;
+            };
+            if let Some(announce) = assets
+                .iter()
+                .find(|a| a["name"].as_str() == Some("announcement.txt"))
+            {
+                successor = Some((tag.to_string(), announce.clone(), assets.clone()));
+                break;
+            }
+        }
+        let Some((tag, announce_asset, assets)) = successor else {
             continue;
         };
-        if !tag.starts_with("m1-v") {
-            println!("m0_handoff_ignored=ok; tag must match m1-v*");
-            continue;
-        }
-        match self_handoff(seed, source, tag) {
-            Ok(()) => {
-                println!(
-                    "m0_handoff_complete=ok; seed wrapped for the successor announced in {tag}"
-                );
-                return Ok(());
+
+        let find = |name: &str| {
+            assets
+                .iter()
+                .find(|a| a["name"].as_str() == Some(name))
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("successor release missing {name}"))
+        };
+        let measurement_asset = find("snp-measurement.txt")?;
+        let measurement_bytes = verify::download_asset_checked(source, &measurement_asset)?;
+        let announcement_bytes = verify::download_asset_checked(source, &announce_asset)?;
+
+        let measurement_text = std::str::from_utf8(&measurement_bytes)?.trim();
+        ensure!(
+            measurement_text.len() == 96,
+            "malformed successor measurement"
+        );
+        let mut measurement = [0u8; 48];
+        hex::decode_to_slice(measurement_text, &mut measurement)?;
+
+        let mut pubkey = None;
+        let mut report = None;
+        for line in String::from_utf8(announcement_bytes)?.lines() {
+            if let Some(value) = line.strip_prefix("pubkey=") {
+                pubkey = Some(hex::decode(value)?);
             }
-            Err(error) => {
-                println!("m0_handoff_error={error}; remaining standing custodian");
+            if let Some(value) = line.strip_prefix("report=") {
+                report = Some(hex::decode(value)?);
             }
         }
+        let pubkey = pubkey.ok_or_else(|| anyhow::anyhow!("announcement has no pubkey"))?;
+        let report = report.ok_or_else(|| anyhow::anyhow!("announcement has no report"))?;
+
+        let report = AttestationReport::from_bytes(&report)?;
+        ensure!(
+            report.measurement == measurement,
+            "announcement report does not match the successor release measurement"
+        );
+        ensure!(report.policy.0 == POLICY, "announcement policy mismatch");
+        ensure!(
+            report.report_data == state::announcement_report_data(&pubkey),
+            "announcement report does not bind the successor pubkey"
+        );
+
+        let fingerprint = hash(seed);
+        let wrap = state::wrap_seed(seed, &fingerprint, &pubkey)?;
+        println!("WRAP_BEGIN");
+        println!("ephemeral_pubkey={}", hex::encode(&wrap.ephemeral_pubkey));
+        println!("blob={}", hex::encode(&wrap.blob));
+        println!("WRAP_END");
+        println!("m0_handoff_complete=ok; seed wrapped for the successor announced in {tag}");
+        return Ok(());
     }
-    Ok(())
 }
 
 /// Verify the successor announcement published inside `tag`'s release and

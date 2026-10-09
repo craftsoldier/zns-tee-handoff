@@ -184,7 +184,7 @@ def phase_genesis():
     blob = bytes.fromhex("".join(
         lines[lines.index("GENESIS_STATE_BLOB_BEGIN") + 1:
                lines.index("GENESIS_STATE_BLOB_END")]))
-    require(blob.hex()[:16] == "4c4e53543030303031"[:16], "bad state magic")
+    require(blob[:8] == b"LNST0001", "bad state magic")
     (RUNTIME / "state").write_bytes(blob)
     print(f"genesis ok: seed {fingerprint(log)}; M0 stays RUNNING (handoff armed)")
     print("RELAY NOW (authenticated machine):")
