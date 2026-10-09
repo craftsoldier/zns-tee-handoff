@@ -173,7 +173,6 @@ def main():
     # Check the executable loader and direct library requirements against the guest payload.
     for executable in (localbin / "zns-tee-handoff", busyboxes[0], usrbin / "kmod"):
         dynamic = run("readelf", "-d", str(executable))
-        import re
         for soname in re.findall(r"Shared library: \[(.*?)\]", dynamic):
             if not any(p.is_file() for p in stage.rglob(soname)):
                 raise RuntimeError(f"missing guest library: {soname}")
