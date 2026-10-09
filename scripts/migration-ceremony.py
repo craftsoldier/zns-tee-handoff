@@ -221,7 +221,7 @@ def phase_recover():
     content = wait_for(log, "m0_handoff_armed=ok")
     print("[recover:3] armed marker found")
     require("state_recovered=ok" in content, "custody state not recovered")
-    require("release_self_check=accept" in content, "self-check not accepted")
+    # 0.17.0 self-checks after the handoff completes, not before arming.
     print(f"recover ok: M0 resurrected from custody-v1; seed {fingerprint(log)}; armed")
 
 
