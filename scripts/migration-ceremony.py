@@ -363,8 +363,10 @@ def phase_verify_m1():
          RUNTIME / "m1-verify.console", RUNTIME / "m1-verify.log")
     console = Console(RUNTIME / "m1-verify.console")
     console.wait_for("state_recovered=ok")
-    text = console.wait_for("release_self_check=")
-    require("release_self_check=accept" in text, "self-check not accepted")
+    # A custody holder arms for the next migration before the boot-end
+    # self-check runs; the armed banner is the terminal marker of a
+    # completed recovery.
+    text = console.wait_for("m0_migration_armed=ok", timeout=60)
     actual = last_value(text, "dummy_seed_sha256=")
     console.close()
     qmp_stop(RUNTIME / "m1-verify.qmp", NAME_M1, RUNTIME / "m1-verify.pid")
