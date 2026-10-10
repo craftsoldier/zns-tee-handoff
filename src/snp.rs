@@ -75,7 +75,9 @@ pub fn boot(challenge: [u8; 32]) -> Result<()> {
         // Fresh lineage: the custodian creates the seed; a successor waits.
         None => {
             if is_successor() {
-                successor_boot(&mut firmware, &chip_key)?;
+                // No lineage exists yet, so there is no published
+                // fingerprint to enforce against.
+                successor_boot(&mut firmware, &chip_key, None)?;
             } else {
                 let seed = genesis_state(&mut firmware, &chip_key)?;
                 release_self_check();
@@ -96,8 +98,10 @@ pub fn boot(challenge: [u8; 32]) -> Result<()> {
                 migration_listen(&seed, &source)?;
             } else if is_successor() {
                 // The current state is sealed for a different generation:
-                // announce and take custody.
-                successor_boot(&mut firmware, &chip_key)?;
+                // announce and take custody. The wrap must carry the seed
+                // the fetched lineage blob already fingerprints.
+                let lineage = state::fingerprint_of(&blob)?;
+                successor_boot(&mut firmware, &chip_key, Some(&lineage))?;
             } else {
                 println!(
                     "m0_stand_down=ok; custody is held by a newer generation; \
@@ -249,7 +253,11 @@ fn self_migration(seed: &[u8; 32], source: &verify::GitHubRelease, tag: &str) ->
     Ok(())
 }
 
-fn successor_boot(firmware: &mut Firmware, chip_key: &[u8; 32]) -> Result<()> {
+fn successor_boot(
+    firmware: &mut Firmware,
+    chip_key: &[u8; 32],
+    lineage_fingerprint: Option<&[u8; 32]>,
+) -> Result<()> {
     let secret = SecretKey::random(&mut rand::rngs::OsRng);
     let pubkey = secret.public_key().to_encoded_point(false);
     let binding = state::announcement_report_data(pubkey.as_bytes());
@@ -268,11 +276,26 @@ fn successor_boot(firmware: &mut Firmware, chip_key: &[u8; 32]) -> Result<()> {
     // fresh WRAP block awaited instead.
     let seed = loop {
         let (ephemeral_pubkey, wrap_blob) = read_wrap_block(&mut reader)?;
-        match state::unwrap_seed(&secret, &ephemeral_pubkey, &wrap_blob) {
-            Ok(seed) => break seed,
+        let seed = match state::unwrap_seed(&secret, &ephemeral_pubkey, &wrap_blob) {
+            Ok(seed) => seed,
             Err(error) => {
-                println!("m1_wrap_error={error}; waiting for a fresh wrap")
+                println!("m1_wrap_error={error}; waiting for a fresh wrap");
+                continue;
             }
+        };
+        // Lineage continuity: Q is public, so anyone can wrap ANY seed to
+        // it. A wrap that decrypts but carries a foreign seed must never be
+        // re-sealed — only the seed whose fingerprint the custody lineage
+        // already publishes (the plaintext header of the fetched blob).
+        match lineage_fingerprint {
+            Some(expected) if hash(&seed) != *expected => {
+                println!(
+                    "m1_lineage_mismatch=ok; wrap carries a foreign seed; \
+                     waiting for the lineage wrap"
+                );
+                continue;
+            }
+            _ => break seed,
         }
     };
     let fingerprint = hash(&seed);
